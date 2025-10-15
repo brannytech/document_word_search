@@ -4,7 +4,7 @@ import os
 from typing import List
 from docx import Document
 from .base import BaseSearcher, SearchResult
-from utils.helpers import create_context
+from utils.helpers import create_sentence_context
 from config import Config
 
 
@@ -14,44 +14,47 @@ class DOCXSearcher(BaseSearcher):
     def search(self, file_path: str, keyword: str, 
                case_sensitive: bool = False,
                whole_word: bool = False) -> List[SearchResult]:
-        """Search for keyword in DOCX"""
+        """Search for keyword in DOCX with fuzzy matching"""
         results = []
+        
+        if self.stop_search:
+            return results
         
         try:
             doc = Document(file_path)
-            current_char_count = 0
             
-            for para in doc.paragraphs:
-                text = para.text
-                para_start = current_char_count
+            # Extract all text first for better performance
+            full_text = '\n'.join([para.text for para in doc.paragraphs])
+            
+            if not full_text:
+                return results
+            
+            # Use fuzzy pattern
+            pattern = self._build_fuzzy_pattern(keyword, case_sensitive, whole_word)
+            
+            # Find all matches in full text
+            for match in pattern.finditer(full_text):
+                if self.stop_search:
+                    break
                 
-                if not text:
-                    current_char_count += 1
-                    continue
+                # Estimate page number
+                match_position = match.start()
+                page_num = (match_position // Config.CHARS_PER_PAGE_ESTIMATE) + 1
                 
-                pattern = self._build_pattern(keyword, case_sensitive, whole_word)
+                context, rel_start, rel_end = create_sentence_context(
+                    full_text, match.start(), match.end()
+                )
                 
-                for match in pattern.finditer(text):
-                    match_position = para_start + match.start()
-                    page_num = (match_position // Config.CHARS_PER_PAGE_ESTIMATE) + 1
-                    
-                    context, rel_start, rel_end = create_context(
-                        text, match.start(), match.end(),
-                        Config.DEFAULT_CONTEXT_LENGTH
-                    )
-                    
-                    results.append(SearchResult(
-                        file_path=file_path,
-                        file_name=os.path.basename(file_path),
-                        page_number=page_num,
-                        context=context,
-                        match_start=rel_start,
-                        match_end=rel_end,
-                        absolute_position=match_position,
-                        matched_text=match.group()
-                    ))
-                
-                current_char_count += len(text) + 1
+                results.append(SearchResult(
+                    file_path=file_path,
+                    file_name=os.path.basename(file_path),
+                    page_number=page_num,
+                    context=context,
+                    match_start=rel_start,
+                    match_end=rel_end,
+                    absolute_position=match_position,
+                    matched_text=match.group()
+                ))
                 
         except Exception as e:
             print(f"Error reading DOCX {file_path}: {str(e)}")
@@ -63,7 +66,7 @@ class DOCXSearcher(BaseSearcher):
         """Create DOCX with highlighted keywords"""
         try:
             doc = Document(file_path)
-            pattern = self._build_pattern(keyword, case_sensitive, False)
+            pattern = self._build_fuzzy_pattern(keyword, case_sensitive, False)
             
             for para in doc.paragraphs:
                 self._highlight_paragraph(para, pattern)

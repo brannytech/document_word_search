@@ -4,7 +4,7 @@ import os
 from typing import List
 import pypandoc
 from .base import BaseSearcher, SearchResult
-from utils.helpers import create_context
+from utils.helpers import create_sentence_context
 from config import Config
 
 
@@ -14,19 +14,24 @@ class DOCSearcher(BaseSearcher):
     def search(self, file_path: str, keyword: str, 
                case_sensitive: bool = False,
                whole_word: bool = False) -> List[SearchResult]:
-        """Search for keyword in DOC"""
+        """Search for keyword in DOC with fuzzy matching"""
         results = []
+        
+        if self.stop_search:
+            return results
         
         try:
             text = pypandoc.convert_file(file_path, 'plain', format='doc')
-            pattern = self._build_pattern(keyword, case_sensitive, whole_word)
+            pattern = self._build_fuzzy_pattern(keyword, case_sensitive, whole_word)
             
             for match in pattern.finditer(text):
+                if self.stop_search:
+                    break
+                
                 page_num = (match.start() // Config.CHARS_PER_PAGE_ESTIMATE) + 1
                 
-                context, rel_start, rel_end = create_context(
-                    text, match.start(), match.end(),
-                    Config.DEFAULT_CONTEXT_LENGTH
+                context, rel_start, rel_end = create_sentence_context(
+                    text, match.start(), match.end()
                 )
                 
                 results.append(SearchResult(

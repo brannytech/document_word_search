@@ -12,29 +12,69 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def create_context(text: str, match_start: int, match_end: int, 
-                   context_length: int = 150) -> Tuple[str, int, int]:
+def normalize_keyword(keyword: str) -> str:
     """
-    Create context around matched keyword
+    Normalize keyword for fuzzy matching
+    Remove hyphens and special characters, keep only alphanumeric
+    """
+    # Remove hyphens and replace with space
+    normalized = re.sub(r'[-_/]', ' ', keyword)
+    # Remove extra spaces
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return normalized.strip()
+
+
+def create_sentence_context(text: str, match_start: int, match_end: int, 
+                           sentences_before: int = 2, sentences_after: int = 2) -> Tuple[str, int, int]:
+    """
+    Create context around matched keyword using sentence boundaries
     
     Returns:
         Tuple of (context_text, relative_match_start, relative_match_end)
     """
-    start = max(0, match_start - context_length)
-    end = min(len(text), match_end + context_length)
+    # Sentence boundary pattern (. ! ? followed by space or end)
+    sentence_pattern = r'[.!?]+[\s]+'
     
-    context = text[start:end]
+    # Find all sentence boundaries
+    sentences = list(re.finditer(sentence_pattern, text))
+    
+    # Find which sentence contains the match
+    current_sentence_idx = 0
+    for i, sent in enumerate(sentences):
+        if sent.start() > match_start:
+            current_sentence_idx = i
+            break
+    else:
+        current_sentence_idx = len(sentences)
+    
+    # Determine context boundaries
+    start_sentence_idx = max(0, current_sentence_idx - sentences_before)
+    end_sentence_idx = min(len(sentences), current_sentence_idx + sentences_after + 1)
+    
+    # Get start position
+    if start_sentence_idx == 0:
+        start = 0
+    else:
+        start = sentences[start_sentence_idx - 1].end()
+    
+    # Get end position
+    if end_sentence_idx >= len(sentences):
+        end = len(text)
+    else:
+        end = sentences[end_sentence_idx - 1].end()
+    
+    # Extract context
+    context = text[start:end].strip()
+    
+    # Calculate relative positions
     relative_start = match_start - start
     relative_end = match_end - start
     
-    if start > 0:
-        context = "..." + context
-        relative_start += 3
-        relative_end += 3
-    if end < len(text):
-        context = context + "..."
+    # Ensure positions are within context bounds
+    relative_start = max(0, relative_start)
+    relative_end = min(len(context), relative_end)
     
-    return clean_text(context), relative_start, relative_end
+    return context, relative_start, relative_end
 
 
 def get_file_size(file_path: str) -> str:

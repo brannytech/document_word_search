@@ -5,7 +5,7 @@ import PyPDF2
 import fitz
 from typing import List
 from .base import BaseSearcher, SearchResult
-from utils.helpers import create_context
+from utils.helpers import create_sentence_context
 from config import Config
 
 
@@ -15,26 +15,35 @@ class PDFSearcher(BaseSearcher):
     def search(self, file_path: str, keyword: str, 
                case_sensitive: bool = False,
                whole_word: bool = False) -> List[SearchResult]:
-        """Search for keyword in PDF"""
+        """Search for keyword in PDF with fuzzy matching"""
         results = []
+        
+        if self.stop_search:
+            return results
         
         try:
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
                 
                 for page_num in range(len(pdf_reader.pages)):
+                    if self.stop_search:
+                        break
+                    
                     page = pdf_reader.pages[page_num]
                     text = page.extract_text()
                     
                     if not text:
                         continue
                     
-                    pattern = self._build_pattern(keyword, case_sensitive, whole_word)
+                    # Use fuzzy pattern for better matching
+                    pattern = self._build_fuzzy_pattern(keyword, case_sensitive, whole_word)
                     
                     for match in pattern.finditer(text):
-                        context, rel_start, rel_end = create_context(
-                            text, match.start(), match.end(), 
-                            Config.DEFAULT_CONTEXT_LENGTH
+                        if self.stop_search:
+                            break
+                        
+                        context, rel_start, rel_end = create_sentence_context(
+                            text, match.start(), match.end()
                         )
                         
                         results.append(SearchResult(
@@ -58,7 +67,7 @@ class PDFSearcher(BaseSearcher):
         """Create PDF with highlighted keywords"""
         try:
             doc = fitz.open(file_path)
-            pattern = self._build_pattern(keyword, case_sensitive, False)
+            pattern = self._build_fuzzy_pattern(keyword, case_sensitive, False)
             
             for page_num in range(len(doc)):
                 page = doc[page_num]

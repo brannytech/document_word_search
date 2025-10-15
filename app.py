@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 from pathlib import Path
+from typing import List, Tuple
 import os
 from core.search_manager import SearchManager
 from core.result_processor import ResultProcessor
@@ -223,7 +224,7 @@ def main():
                         
                         # Build highlighted context
                         context = merged.merged_context
-                        highlighted_html = self._build_highlighted_html(
+                        highlighted_html = build_highlighted_html(
                             context, 
                             merged.match_positions
                         )
@@ -296,7 +297,7 @@ def main():
                 st.info("💡 **Tip:** The Excel report contains all individual matches. The display above shows merged contexts for easier reading.")
 
 
-def _build_highlighted_html(context: str, match_positions: List[Tuple[int, int]]) -> str:
+def build_highlighted_html(context: str, match_positions: List[Tuple[int, int]]) -> str:
     """
     Build HTML with all matches highlighted in yellow
     

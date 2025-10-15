@@ -1,6 +1,6 @@
 """Main search manager with parallel processing"""
 
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Tuple, Callable
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 from threading import Lock

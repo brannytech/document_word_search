@@ -19,8 +19,8 @@ class Config:
     
     # Parallel processing settings
     MIN_FILES_FOR_BATCHING = 50
-    BATCH_SIZE = 100
-    MAX_WORKERS = min(32, (os.cpu_count() or 1) * 4)  # Cap at 32 threads
+    BATCH_SIZE = 150
+    MAX_WORKERS = min(64, (os.cpu_count() or 1) * 4)  # Cap at 32 threads
     
     # Context merging settings
     MAX_SENTENCES_TO_MERGE = 5  # Merge matches within 5 sentences
@@ -32,7 +32,7 @@ class Config:
     LAYOUT = "wide"
     
     # Highlighting colors
-    HIGHLIGHT_COLOR_RGB = (255, 255, 0)  # Yellow
+    HIGHLIGHT_COLOR_RGB = (1.0, 1.0, 0.0)  # Yellow
     HIGHLIGHT_COLOR_WORD = 7  # Word highlight color code
     
     # Export settings

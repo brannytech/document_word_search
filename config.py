@@ -1,5 +1,8 @@
+"""Configuration settings for the Document Search Tool"""
+
 from pathlib import Path
 from dataclasses import dataclass
+import os
 
 
 @dataclass
@@ -13,6 +16,15 @@ class Config:
     DEFAULT_CONTEXT_LENGTH = 150
     CHARS_PER_PAGE_ESTIMATE = 3000
     MAX_RESULTS_PER_FILE = 1000
+    
+    # Parallel processing settings
+    MIN_FILES_FOR_BATCHING = 50
+    BATCH_SIZE = 100
+    MAX_WORKERS = min(32, (os.cpu_count() or 1) * 4)  # Cap at 32 threads
+    
+    # Context merging settings
+    MAX_SENTENCES_TO_MERGE = 5  # Merge matches within 5 sentences
+    ELLIPSIS_TEXT = "... [gap] ..."
     
     # UI settings
     PAGE_TITLE = "📄 Document Keyword Search Tool"

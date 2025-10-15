@@ -17,11 +17,37 @@ def normalize_keyword(keyword: str) -> str:
     Normalize keyword for fuzzy matching
     Remove hyphens and special characters, keep only alphanumeric
     """
-    # Remove hyphens and replace with space
     normalized = re.sub(r'[-_/]', ' ', keyword)
-    # Remove extra spaces
     normalized = re.sub(r'\s+', ' ', normalized)
     return normalized.strip()
+
+
+def find_sentence_boundaries(text: str) -> List[int]:
+    """
+    Find all sentence boundary positions in text
+    Returns list of positions where sentences end
+    """
+    sentence_pattern = r'[.!?]+[\s]+'
+    boundaries = [0]  # Start of text
+    
+    for match in re.finditer(sentence_pattern, text):
+        boundaries.append(match.end())
+    
+    boundaries.append(len(text))  # End of text
+    return boundaries
+
+
+def count_sentences_between(text: str, pos1: int, pos2: int) -> int:
+    """
+    Count number of sentences between two positions
+    """
+    if pos1 > pos2:
+        pos1, pos2 = pos2, pos1
+    
+    text_between = text[pos1:pos2]
+    sentence_pattern = r'[.!?]+[\s]+'
+    sentences = re.findall(sentence_pattern, text_between)
+    return len(sentences)
 
 
 def create_sentence_context(text: str, match_start: int, match_end: int, 
@@ -32,13 +58,9 @@ def create_sentence_context(text: str, match_start: int, match_end: int,
     Returns:
         Tuple of (context_text, relative_match_start, relative_match_end)
     """
-    # Sentence boundary pattern (. ! ? followed by space or end)
     sentence_pattern = r'[.!?]+[\s]+'
-    
-    # Find all sentence boundaries
     sentences = list(re.finditer(sentence_pattern, text))
     
-    # Find which sentence contains the match
     current_sentence_idx = 0
     for i, sent in enumerate(sentences):
         if sent.start() > match_start:
@@ -47,30 +69,23 @@ def create_sentence_context(text: str, match_start: int, match_end: int,
     else:
         current_sentence_idx = len(sentences)
     
-    # Determine context boundaries
     start_sentence_idx = max(0, current_sentence_idx - sentences_before)
     end_sentence_idx = min(len(sentences), current_sentence_idx + sentences_after + 1)
     
-    # Get start position
     if start_sentence_idx == 0:
         start = 0
     else:
         start = sentences[start_sentence_idx - 1].end()
     
-    # Get end position
     if end_sentence_idx >= len(sentences):
         end = len(text)
     else:
         end = sentences[end_sentence_idx - 1].end()
     
-    # Extract context
     context = text[start:end].strip()
-    
-    # Calculate relative positions
     relative_start = match_start - start
     relative_end = match_end - start
     
-    # Ensure positions are within context bounds
     relative_start = max(0, relative_start)
     relative_end = min(len(context), relative_end)
     

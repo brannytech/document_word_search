@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 import os
 from core.search_manager import SearchManager
+from core.result_processor import ResultProcessor
 from core.highlighter import DocumentHighlighter
 from config import Config
 from utils.helpers import get_file_size
@@ -25,6 +26,12 @@ if 'searching' not in st.session_state:
     st.session_state.searching = False
 if 'search_manager' not in st.session_state:
     st.session_state.search_manager = None
+if 'processed_results' not in st.session_state:
+    st.session_state.processed_results = None
+if 'search_stopped' not in st.session_state:
+    st.session_state.search_stopped = False
+if 'completion_stats' not in st.session_state:
+    st.session_state.completion_stats = (0, 0)
 
 
 def main():
@@ -32,7 +39,7 @@ def main():
     
     # Header
     st.title(f"{Config.PAGE_ICON} Document Keyword Search Tool")
-    st.markdown("Search for keywords across PDF, DOCX, and DOC files with automatic highlighting")
+    st.markdown("Search for keywords across PDF, DOCX, and DOC files with **parallel processing** and automatic highlighting")
     
     # Sidebar
     with st.sidebar:
@@ -53,6 +60,7 @@ def main():
         
         st.info("🔹 Search is **always case-insensitive** for better matching")
         st.info("🔹 Automatically matches word variations (e.g., 'low-resource' matches 'low resource' and 'low resources')")
+        st.info(f"⚡ **Parallel processing** enabled with up to {Config.MAX_WORKERS} workers")
         
         whole_word = st.checkbox("Whole Word Match", value=False)
         
@@ -94,6 +102,7 @@ def main():
         if st.session_state.search_manager:
             st.session_state.search_manager.stop_search()
             st.session_state.searching = False
+            st.session_state.search_stopped = True
             st.warning("⏹️ Search stopped by user")
             st.rerun()
     
@@ -108,9 +117,10 @@ def main():
             return
         
         st.session_state.searching = True
+        st.session_state.search_stopped = False
         
         # Perform search
-        with st.spinner("🔍 Searching documents..."):
+        with st.spinner("🔍 Searching documents in parallel..."):
             try:
                 manager = SearchManager()
                 st.session_state.search_manager = manager
@@ -125,10 +135,11 @@ def main():
                         progress_bar.progress(progress)
                         status_text.text(f"Searching: {filename} ({current}/{total})")
                 
+                # Search with parallel processing
                 results = manager.search_directory(
                     directory=directory,
                     keyword=keyword,
-                    case_sensitive=False,  # Always case insensitive
+                    case_sensitive=False,
                     whole_word=whole_word,
                     file_extensions=file_types,
                     progress_callback=update_progress
@@ -137,8 +148,26 @@ def main():
                 progress_bar.empty()
                 status_text.empty()
                 
+                # Get completion statistics
+                completed, total = manager.get_completion_stats(len(results))
+                st.session_state.completion_stats = (completed, total)
+                
+                # Process results to merge nearby matches
+                if results:
+                    processor = ResultProcessor()
+                    processed_results = processor.process_results(results)
+                    st.session_state.processed_results = processed_results
+                else:
+                    st.session_state.processed_results = {}
+                
                 st.session_state.search_results = results
                 st.session_state.searching = False
+                
+                # Show completion message
+                if manager.stop_requested:
+                    st.warning(f"⏹️ Search stopped. Showing results from {completed} files.")
+                else:
+                    st.success(f"✅ Search completed! Found matches in {len(results)} files.")
                 
                 # Highlight documents if requested
                 if auto_highlight and results and not manager.stop_requested:
@@ -149,65 +178,68 @@ def main():
                         )
                         st.session_state.highlighted_files = highlighted
                 
-                if manager.stop_requested:
-                    st.warning("⏹️ Search was stopped before completion")
-                
             except Exception as e:
                 st.error(f"Error during search: {str(e)}")
                 st.session_state.searching = False
                 return
     
     # Display results
-    if st.session_state.search_results is not None:
-        results = st.session_state.search_results
+    if st.session_state.processed_results is not None:
+        processed_results = st.session_state.processed_results
+        raw_results = st.session_state.search_results
         
-        if not results:
+        if not processed_results:
             st.info("🔍 No matches found for the given keyword")
         else:
             # Summary metrics
-            total_matches = sum(len(matches) for matches in results.values())
-            total_files = len(results)
+            total_matches = sum(len(raw_results.get(fp, [])) for fp in processed_results.keys())
+            total_files = len(processed_results)
+            completed, total_searched = st.session_state.completion_stats
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             col1.metric("📄 Files with Matches", total_files)
             col2.metric("🎯 Total Matches", total_matches)
             col3.metric("🔍 Search Term", f'"{keyword}"')
+            col4.metric("⚡ Files Searched", f"{completed}/{total_searched}" if st.session_state.search_stopped else completed)
             
             st.markdown("---")
             
-            # Results by file
-            for file_path, matches in results.items():
-                with st.expander(f"📄 {Path(file_path).name} ({len(matches)} matches)", expanded=False):
+            # Results by file (using merged results)
+            for file_path, merged_matches in processed_results.items():
+                total_matches_in_file = sum(m.match_count for m in merged_matches)
+                
+                with st.expander(
+                    f"📄 {Path(file_path).name} ({total_matches_in_file} matches on {len(merged_matches)} page{'s' if len(merged_matches) != 1 else ''})", 
+                    expanded=False
+                ):
                     st.caption(f"**Path:** {file_path}")
                     st.caption(f"**Size:** {get_file_size(file_path)}")
                     
                     st.markdown("### Matches")
                     
-                    # Display all matches for this file
-                    for idx, match in enumerate(matches, 1):
-                        st.markdown(f"**Match {idx} - Page {match.page_number}**")
+                    # Display merged matches
+                    for idx, merged in enumerate(merged_matches, 1):
+                        st.markdown(f"**Page {merged.page_number}** ({merged.match_count} match{'es' if merged.match_count > 1 else ''})")
                         
-                        # Highlight the keyword in context with BLACK text
-                        context = match.context
-                        before = context[:match.match_start]
-                        keyword_text = context[match.match_start:match.match_end]
-                        after = context[match.match_end:]
+                        # Build highlighted context
+                        context = merged.merged_context
+                        highlighted_html = self._build_highlighted_html(
+                            context, 
+                            merged.match_positions
+                        )
                         
-                        # Updated styling with black text
+                        # Display with black text
                         st.markdown(
                             f'<div style="background-color: #f8f9fa; padding: 12px; border-radius: 5px; '
                             f'margin: 8px 0; border-left: 3px solid #007bff; color: #000000; '
                             f'font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', sans-serif;">'
-                            f'<span style="color: #000000;">{before}</span>'
-                            f'<span style="background-color: #FFFF00; font-weight: bold; '
-                            f'padding: 2px 4px; border-radius: 2px; color: #000000;">{keyword_text}</span>'
-                            f'<span style="color: #000000;">{after}</span>'
+                            f'{highlighted_html}'
                             f'</div>',
                             unsafe_allow_html=True
                         )
                         
-                        if idx < len(matches):
-                            st.markdown("<div style='margin: 5px 0;'></div>", unsafe_allow_html=True)
+                        if idx < len(merged_matches):
+                            st.markdown("<div style='margin: 10px 0;'></div>", unsafe_allow_html=True)
                     
                     st.markdown("---")
                     
@@ -235,7 +267,7 @@ def main():
             with col1:
                 if st.button("📥 Export to Excel", use_container_width=True):
                     df_data = []
-                    for file_path, matches in results.items():
+                    for file_path, matches in raw_results.items():
                         for match in matches:
                             df_data.append({
                                 'File Name': match.file_name,
@@ -261,7 +293,45 @@ def main():
                         )
             
             with col2:
-                st.info("💡 **Tip:** The Excel report contains all matches with their context and page numbers for easy reference.")
+                st.info("💡 **Tip:** The Excel report contains all individual matches. The display above shows merged contexts for easier reading.")
+
+
+def _build_highlighted_html(context: str, match_positions: List[Tuple[int, int]]) -> str:
+    """
+    Build HTML with all matches highlighted in yellow
+    
+    Args:
+        context: The full context text
+        match_positions: List of (start, end) tuples for highlighting
+    """
+    if not match_positions:
+        return f'<span style="color: #000000;">{context}</span>'
+    
+    # Sort positions by start
+    positions = sorted(match_positions, key=lambda x: x[0])
+    
+    # Build HTML with highlights
+    html_parts = []
+    last_end = 0
+    
+    for start, end in positions:
+        # Add text before match
+        if start > last_end:
+            html_parts.append(f'<span style="color: #000000;">{context[last_end:start]}</span>')
+        
+        # Add highlighted match
+        html_parts.append(
+            f'<span style="background-color: #FFFF00; font-weight: bold; '
+            f'padding: 2px 4px; border-radius: 2px; color: #000000;">{context[start:end]}</span>'
+        )
+        
+        last_end = end
+    
+    # Add remaining text
+    if last_end < len(context):
+        html_parts.append(f'<span style="color: #000000;">{context[last_end:]}</span>')
+    
+    return ''.join(html_parts)
 
 
 if __name__ == "__main__":

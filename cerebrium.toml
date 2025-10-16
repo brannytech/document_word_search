@@ -1,0 +1,3 @@
+[project]
+entrypoint = "main.py"
+runtime = "python3.10"

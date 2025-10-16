@@ -1,19 +1,19 @@
 {
   "performance": {
-    "max_workers": 16,
-    "batch_size": 100,
-    "min_files_for_batching": 50
+    "max_workers": 64,
+    "batch_size": 500,
+    "min_files_for_batching": 30
   },
   "context": {
-    "sentences_before": 2,
-    "sentences_after": 2,
+    "sentences_before": 3,
+    "sentences_after": 3,
     "max_merge_distance": 5
   },
   "cache": {
     "enabled": true,
-    "max_size_mb": 500,
-    "persistent": false,
-    "auto_preextract_threshold": 100
+    "max_size_mb": 1000,
+    "persistent": true,
+    "auto_preextract_threshold": 50
   },
-  "profile": "balanced"
+  "profile": "maximum"
 }

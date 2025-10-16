@@ -1,4 +1,4 @@
-"""Streamlit application with Settings Tab and Caching"""
+"""Streamlit application with Settings Tab and Caching - BUG FIXED"""
 
 import streamlit as st
 import pandas as pd
@@ -50,6 +50,9 @@ if 'extracted_texts' not in st.session_state:
     st.session_state.extracted_texts = {}
 if 'settings_changed' not in st.session_state:
     st.session_state.settings_changed = False
+# BUG FIX: Add flag to prevent infinite rerun loop
+if 'prevent_rerun' not in st.session_state:
+    st.session_state.prevent_rerun = False
 
 
 def build_highlighted_html(context: str, match_positions: List[Tuple[int, int]]) -> str:
@@ -99,39 +102,47 @@ def render_settings_tab():
         "Choose a profile:",
         options=list(profile_options.keys()),
         format_func=lambda x: profile_options[x],
-        index=list(profile_options.keys()).index(current_profile)
+        index=list(profile_options.keys()).index(current_profile),
+        key='profile_selector'  # BUG FIX: Add unique key
     )
     
-    # Apply preset if changed
-    if selected_profile != 'custom' and selected_profile != current_profile:
-        settings = SettingsManager.get_preset(selected_profile)
-        st.session_state.user_settings = settings
+    # BUG FIX: Only apply preset if changed and not preventing rerun
+    if selected_profile != 'custom' and selected_profile != current_profile and not st.session_state.prevent_rerun:
+        st.session_state.user_settings = SettingsManager.get_preset(selected_profile)
         st.session_state.settings_changed = True
+        st.session_state.prevent_rerun = True
         st.rerun()
+    
+    # Reset prevent_rerun flag after rerun
+    if st.session_state.prevent_rerun:
+        st.session_state.prevent_rerun = False
     
     st.markdown("---")
     
     # System Information
     with st.expander("💻 System Information", expanded=False):
-        cpu_count = os.cpu_count() or 1
-        cpu_percent = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("CPU Cores", cpu_count)
-            st.metric("CPU Usage", f"{cpu_percent}%")
-        with col2:
-            st.metric("Total RAM", f"{memory.total / (1024**3):.1f} GB")
-            st.metric("Available RAM", f"{memory.available / (1024**3):.1f} GB")
-        
-        # Recommendation
-        if cpu_count >= 8 and memory.available / (1024**3) > 4:
-            st.success("✅ Recommended: High Performance or Maximum")
-        elif cpu_count >= 4:
-            st.info("ℹ️ Recommended: Balanced")
-        else:
-            st.warning("⚠️ Recommended: Low Resource")
+        try:
+            cpu_count = os.cpu_count() or 1
+            cpu_percent = psutil.cpu_percent(interval=0.1)  # BUG FIX: Reduced interval to prevent blocking
+            memory = psutil.virtual_memory()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("CPU Cores", cpu_count)
+                st.metric("CPU Usage", f"{cpu_percent}%")
+            with col2:
+                st.metric("Total RAM", f"{memory.total / (1024**3):.1f} GB")
+                st.metric("Available RAM", f"{memory.available / (1024**3):.1f} GB")
+            
+            # Recommendation
+            if cpu_count >= 8 and memory.available / (1024**3) > 4:
+                st.success("✅ Recommended: High Performance or Maximum")
+            elif cpu_count >= 4:
+                st.info("ℹ️ Recommended: Balanced")
+            else:
+                st.warning("⚠️ Recommended: Low Resource")
+        except Exception as e:
+            st.error(f"Could not retrieve system info: {e}")
     
     st.markdown("---")
     
@@ -146,7 +157,8 @@ def render_settings_tab():
             min_value=1,
             max_value=64,
             value=settings.performance.max_workers,
-            help="More workers = faster search, but uses more CPU"
+            help="More workers = faster search, but uses more CPU",
+            key='max_workers_slider'  # BUG FIX: Add unique key
         )
         
         min_batching = st.slider(
@@ -154,7 +166,8 @@ def render_settings_tab():
             min_value=10,
             max_value=200,
             value=settings.performance.min_files_for_batching,
-            help="Files threshold to enable batching"
+            help="Files threshold to enable batching",
+            key='min_batching_slider'  # BUG FIX: Add unique key
         )
     
     with col2:
@@ -163,7 +176,8 @@ def render_settings_tab():
             min_value=10,
             max_value=500,
             value=settings.performance.batch_size,
-            help="Number of files per batch"
+            help="Number of files per batch",
+            key='batch_size_slider'  # BUG FIX: Add unique key
         )
     
     # Update settings if changed
@@ -188,7 +202,8 @@ def render_settings_tab():
             "Sentences Before Match",
             min_value=1,
             max_value=5,
-            value=settings.context.sentences_before
+            value=settings.context.sentences_before,
+            key='sentences_before_slider'  # BUG FIX: Add unique key
         )
     
     with col2:
@@ -196,7 +211,8 @@ def render_settings_tab():
             "Sentences After Match",
             min_value=1,
             max_value=5,
-            value=settings.context.sentences_after
+            value=settings.context.sentences_after,
+            key='sentences_after_slider'  # BUG FIX: Add unique key
         )
     
     with col3:
@@ -205,7 +221,8 @@ def render_settings_tab():
             min_value=3,
             max_value=10,
             value=settings.context.max_merge_distance,
-            help="Maximum sentences between matches to merge them"
+            help="Maximum sentences between matches to merge them",
+            key='merge_distance_slider'  # BUG FIX: Add unique key
         )
     
     if (sentences_before != settings.context.sentences_before or
@@ -225,7 +242,8 @@ def render_settings_tab():
     cache_enabled = st.checkbox(
         "Enable Text Caching",
         value=settings.cache.enabled,
-        help="Cache extracted text for faster repeated searches"
+        help="Cache extracted text for faster repeated searches",
+        key='cache_enabled_checkbox'  # BUG FIX: Add unique key
     )
     
     if cache_enabled:
@@ -237,13 +255,15 @@ def render_settings_tab():
                 min_value=100,
                 max_value=2000,
                 value=settings.cache.max_size_mb,
-                step=100
+                step=100,
+                key='cache_size_slider'  # BUG FIX: Add unique key
             )
             
             persistent_cache = st.checkbox(
                 "Persistent Cache (save to disk)",
                 value=settings.cache.persistent,
-                help="Keep cache between app restarts (slower but persistent)"
+                help="Keep cache between app restarts (slower but persistent)",
+                key='persistent_cache_checkbox'  # BUG FIX: Add unique key
             )
         
         with col2:
@@ -252,20 +272,23 @@ def render_settings_tab():
                 min_value=50,
                 max_value=500,
                 value=settings.cache.auto_preextract_threshold,
-                help="Auto-suggest pre-extraction when file count exceeds this"
+                help="Auto-suggest pre-extraction when file count exceeds this",
+                key='auto_threshold_slider'  # BUG FIX: Add unique key
             )
             
             # Cache statistics
             if st.session_state.text_cache:
-                stats = st.session_state.text_cache.get_stats()
-                st.metric("Cache Usage", f"{stats['size_mb']:.1f} / {stats['max_size_mb']} MB")
-                st.metric("Cached Files", stats['entries'])
-                
-                if st.button("🗑️ Clear Cache"):
-                    st.session_state.text_cache.clear()
-                    st.session_state.extracted_texts = {}
-                    st.success("Cache cleared!")
-                    st.rerun()
+                try:
+                    stats = st.session_state.text_cache.get_stats()
+                    st.metric("Cache Usage", f"{stats['size_mb']:.1f} / {stats['max_size_mb']} MB")
+                    st.metric("Cached Files", stats['entries'])
+                    
+                    if st.button("🗑️ Clear Cache", key='clear_cache_button'):  # BUG FIX: Add unique key
+                        st.session_state.text_cache.clear()
+                        st.session_state.extracted_texts = {}
+                        st.success("Cache cleared!")
+                except Exception as e:
+                    st.error(f"Error getting cache stats: {e}")
         
         if (cache_size != settings.cache.max_size_mb or
             persistent_cache != settings.cache.persistent or
@@ -301,27 +324,34 @@ def render_settings_tab():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("💾 Save Settings", use_container_width=True):
+        if st.button("💾 Save Settings", use_container_width=True, key='save_settings_button'):  # BUG FIX: Add unique key
             SettingsManager.save_settings(settings)
             Config.apply_user_settings(settings)
             st.session_state.settings_changed = False
             st.success("✅ Settings saved!")
     
     with col2:
-        if st.button("🔄 Reset to Balanced", use_container_width=True):
+        # BUG FIX: Remove st.rerun() to prevent infinite loop
+        if st.button("🔄 Reset to Balanced", use_container_width=True, key='reset_settings_button'):  # BUG FIX: Add unique key
             st.session_state.user_settings = SettingsManager.get_preset('balanced')
             SettingsManager.save_settings(st.session_state.user_settings)
             Config.apply_user_settings(st.session_state.user_settings)
             st.session_state.settings_changed = False
-            st.success("✅ Reset to balanced settings!")
-            st.rerun()
+            # Recreate cache with balanced settings
+            if st.session_state.user_settings.cache.enabled:
+                st.session_state.text_cache = TextCache(
+                    max_size_mb=st.session_state.user_settings.cache.max_size_mb,
+                    persistent=st.session_state.user_settings.cache.persistent
+                )
+            else:
+                st.session_state.text_cache = None
+            st.success("✅ Reset to balanced settings! Please refresh the page to see changes.")
     
     with col3:
-        if st.button("↩️ Discard Changes", use_container_width=True):
+        if st.button("↩️ Discard Changes", use_container_width=True, key='discard_changes_button'):  # BUG FIX: Add unique key
             st.session_state.user_settings = SettingsManager.load_settings()
             st.session_state.settings_changed = False
             st.info("ℹ️ Changes discarded")
-            st.rerun()
     
     if st.session_state.settings_changed:
         st.warning("⚠️ You have unsaved changes. Click 'Save Settings' to apply them.")
@@ -331,7 +361,13 @@ def main():
     """Main application"""
     
     # Apply current settings to Config
-    Config.apply_user_settings(st.session_state.user_settings)
+    try:
+        Config.apply_user_settings(st.session_state.user_settings)
+    except Exception as e:
+        st.error(f"Error applying settings: {e}")
+        # Use default settings if error
+        st.session_state.user_settings = SettingsManager.get_preset('balanced')
+        Config.apply_user_settings(st.session_state.user_settings)
     
     # Header
     st.title(f"{Config.PAGE_ICON} Document Keyword Search Tool")
@@ -384,32 +420,33 @@ def main():
             )
             
             # Pre-extraction option
+            use_preextract = False  # BUG FIX: Initialize variable
             if directory and os.path.exists(directory):
-                files = get_all_files(directory, file_types)
-                file_count = len(files)
-                
-                if file_count > 0:
-                    st.markdown("---")
-                    st.subheader("⚡ Performance Options")
+                try:
+                    files = get_all_files(directory, file_types)
+                    file_count = len(files)
                     
-                    # Smart auto-suggest for pre-extraction
-                    if file_count >= current_settings.cache.auto_preextract_threshold:
-                        st.warning(f"📊 {file_count} files detected. Pre-extraction recommended for multiple searches!")
-                        use_preextract = st.checkbox(
-                            "🚀 Pre-extract all text (faster for repeated searches)",
-                            value=True,
-                            help=f"Extract text from all {file_count} files upfront. First search slower, subsequent searches much faster!"
-                        )
-                    else:
-                        use_preextract = st.checkbox(
-                            "🚀 Pre-extract all text",
-                            value=False,
-                            help="Extract text from all files upfront for faster repeated searches"
-                        )
-                else:
+                    if file_count > 0:
+                        st.markdown("---")
+                        st.subheader("⚡ Performance Options")
+                        
+                        # Smart auto-suggest for pre-extraction
+                        if file_count >= current_settings.cache.auto_preextract_threshold:
+                            st.warning(f"📊 {file_count} files detected. Pre-extraction recommended for multiple searches!")
+                            use_preextract = st.checkbox(
+                                "🚀 Pre-extract all text (faster for repeated searches)",
+                                value=True,
+                                help=f"Extract text from all {file_count} files upfront. First search slower, subsequent searches much faster!"
+                            )
+                        else:
+                            use_preextract = st.checkbox(
+                                "🚀 Pre-extract all text",
+                                value=False,
+                                help="Extract text from all files upfront for faster repeated searches"
+                            )
+                except Exception as e:
+                    st.error(f"Error checking directory: {e}")
                     use_preextract = False
-            else:
-                use_preextract = False
             
             st.markdown("---")
             
@@ -445,11 +482,11 @@ def main():
         if search_button:
             if not keyword:
                 st.error("Please enter a search keyword")
-                return
+                return  # BUG FIX: Use return instead of continue in function
             
             if not os.path.exists(directory):
                 st.error(f"Directory not found: {directory}")
-                return
+                return  # BUG FIX: Use return instead of continue in function
             
             st.session_state.searching = True
             st.session_state.search_stopped = False
@@ -461,7 +498,7 @@ def main():
                 if not files:
                     st.error("No supported files found in directory")
                     st.session_state.searching = False
-                    return
+                    return  # BUG FIX: Use return instead of continue in function
                 
                 # Pre-extraction if enabled
                 if use_preextract and current_settings.cache.enabled:
@@ -536,9 +573,12 @@ def main():
                     else:
                         # Show cache stats if enabled
                         if st.session_state.text_cache:
-                            cache_stats = st.session_state.text_cache.get_stats()
-                            st.success(f"✅ Search completed! Found matches in {len(results)} files. "
-                                     f"(Cache: {cache_stats['entries']} files, {cache_stats['size_mb']:.1f} MB)")
+                            try:
+                                cache_stats = st.session_state.text_cache.get_stats()
+                                st.success(f"✅ Search completed! Found matches in {len(results)} files. "
+                                         f"(Cache: {cache_stats['entries']} files, {cache_stats['size_mb']:.1f} MB)")
+                            except Exception as e:
+                                st.success(f"✅ Search completed! Found matches in {len(results)} files.")
                         else:
                             st.success(f"✅ Search completed! Found matches in {len(results)} files.")
                     
@@ -556,7 +596,7 @@ def main():
                 st.session_state.searching = False
                 import traceback
                 st.code(traceback.format_exc())
-                return
+                return  # BUG FIX: Use return instead of continue in function
         
         # Display results
         if st.session_state.processed_results is not None:

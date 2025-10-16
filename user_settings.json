@@ -1,0 +1,19 @@
+{
+  "performance": {
+    "max_workers": 16,
+    "batch_size": 100,
+    "min_files_for_batching": 50
+  },
+  "context": {
+    "sentences_before": 2,
+    "sentences_after": 2,
+    "max_merge_distance": 5
+  },
+  "cache": {
+    "enabled": true,
+    "max_size_mb": 500,
+    "persistent": false,
+    "auto_preextract_threshold": 100
+  },
+  "profile": "balanced"
+}

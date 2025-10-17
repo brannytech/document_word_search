@@ -1,4 +1,4 @@
-"""Streamlit application with Hybrid Search System - COMPLETE FILE"""
+"""Streamlit application with Hybrid Search System - ALL BUGS FIXED"""
 
 import streamlit as st
 import pandas as pd
@@ -56,6 +56,10 @@ if 'settings_changed' not in st.session_state:
     st.session_state.settings_changed = False
 if 'prevent_rerun' not in st.session_state:
     st.session_state.prevent_rerun = False
+if 'selected_directory' not in st.session_state:
+    st.session_state.selected_directory = "./documents"
+if 'folder_picker_clicked' not in st.session_state:
+    st.session_state.folder_picker_clicked = False
 
 
 def build_highlighted_html(context: str, match_positions: List[Tuple[int, int]]) -> str:
@@ -156,7 +160,7 @@ def render_index_settings_section(settings):
                 "- **Best for: Regular use**")
     elif selected_mode == 'fast_extract':
         st.info("⚡ **Phase 1: Fast Extract**\n"
-                "- Uses PyMuPDF + Multiprocessing\n"
+                "- Uses PyMuPDF + Multithreading\n"
                 "- No indexing, no persistence\n"
                 "- Each search: 10-20s for 200 files\n"
                 "- **Best for: One-time searches**")
@@ -217,7 +221,6 @@ def render_index_settings_section(settings):
                 if st.button("🗑️ Clear Index", key='clear_index_button'):
                     index.clear_index()
                     st.success("Index cleared!")
-                    st.rerun()
             
             with col2:
                 if st.button("🔄 Rebuild Index", key='rebuild_index_button'):
@@ -299,7 +302,7 @@ def render_settings_tab():
     
     with col1:
         max_workers = st.slider(
-            "Max Workers (parallel processes)",
+            "Max Workers (parallel threads)",
             min_value=1,
             max_value=32,
             value=settings.performance.max_workers,
@@ -489,7 +492,7 @@ def render_settings_tab():
                 )
             else:
                 st.session_state.text_cache = None
-            st.success("✅ Reset to balanced settings! Please refresh the page to see changes.")
+            st.success("✅ Reset to balanced settings!")
     
     with col3:
         if st.button("↩️ Discard Changes", use_container_width=True, key='discard_changes_button'):
@@ -525,11 +528,52 @@ def main():
         with st.sidebar:
             st.header("🔍 Search Configuration")
             
-            directory = st.text_input(
-                "📁 Directory Path",
-                value="./documents",
-                help="Enter the path to the directory containing your documents"
+            # Folder picker - FIXED: Prevent double opening
+            st.subheader("📁 Select Document Folder")
+            
+            # Directory input
+            directory_input = st.text_input(
+                "Directory Path",
+                value=st.session_state.selected_directory,
+                help="Enter the path or use Browse button",
+                key='directory_input_field'
             )
+            
+            # Browse button
+            if st.button("📂 Browse Folder", use_container_width=True, key='browse_folder_btn'):
+                # Set flag to prevent double execution
+                st.session_state.folder_picker_clicked = True
+                
+                # Open folder picker using tkinter
+                try:
+                    import tkinter as tk
+                    from tkinter import filedialog
+                    
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.wm_attributes('-topmost', 1)
+                    
+                    folder_path = filedialog.askdirectory(
+                        title='Select Document Folder',
+                        initialdir=st.session_state.selected_directory
+                    )
+                    
+                    root.destroy()
+                    
+                    if folder_path:
+                        st.session_state.selected_directory = folder_path
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error opening folder picker: {e}")
+            
+            # Update from text input
+            if directory_input != st.session_state.selected_directory and not st.session_state.folder_picker_clicked:
+                st.session_state.selected_directory = directory_input
+            
+            # Reset flag
+            st.session_state.folder_picker_clicked = False
+            
+            st.markdown("---")
             
             keyword = st.text_input(
                 "🔍 Search Keyword/Phrase",
@@ -565,8 +609,8 @@ def main():
             
             auto_highlight = st.checkbox(
                 "Auto-generate highlighted documents",
-                value=True,
-                help="Automatically create highlighted versions of matching documents"
+                value=False,  # CHANGED TO FALSE to prevent hanging
+                help="Generate highlighted versions (may take extra time for many files)"
             )
             
             st.markdown("---")
@@ -603,30 +647,29 @@ def main():
         if search_button:
             if not keyword:
                 st.error("Please enter a search keyword")
-            elif not os.path.exists(directory):
-                st.error(f"Directory not found: {directory}")
+            elif not os.path.exists(st.session_state.selected_directory):
+                st.error(f"Directory not found: {st.session_state.selected_directory}")
             else:
                 st.session_state.searching = True
                 st.session_state.search_stopped = False
                 
+                # Create placeholders
+                progress_container = st.empty()
+                status_container = st.empty()
+                
                 try:
-                    # Progress display
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
                     def update_progress(current, total, filename):
                         progress = current / total
-                        progress_bar.progress(progress)
-                        status_text.text(f"Searching: {filename} ({current}/{total})")
+                        progress_container.progress(progress, text=f"Searching: {filename} ({current}/{total})")
                     
                     # Hybrid search
-                    with st.spinner("🔍 Searching with hybrid engine..."):
-                        results, completion_stats = perform_hybrid_search(
-                            directory, keyword, whole_word, file_types, update_progress
-                        )
+                    results, completion_stats = perform_hybrid_search(
+                        st.session_state.selected_directory, keyword, whole_word, file_types, update_progress
+                    )
                     
-                    progress_bar.empty()
-                    status_text.empty()
+                    # Clear progress indicators
+                    progress_container.empty()
+                    status_container.empty()
                     
                     if results is None:
                         st.session_state.searching = False
@@ -642,7 +685,6 @@ def main():
                             st.session_state.processed_results = {}
                         
                         st.session_state.search_results = results
-                        st.session_state.searching = False
                         
                         # Success message
                         completed, total = completion_stats
@@ -668,19 +710,28 @@ def main():
                                 except:
                                     pass
                         
-                        # Highlight documents
-                        if auto_highlight and results and not st.session_state.search_stopped:
-                            with st.spinner("✨ Generating highlighted documents..."):
-                                manager = SearchManager()
-                                highlighter = DocumentHighlighter(manager)
-                                highlighted = highlighter.highlight_all_results(results, keyword, False)
-                                st.session_state.highlighted_files = highlighted
-                        
+                        # FIXED: Only highlight if explicitly enabled and results exist
+                        if auto_highlight and results and not st.session_state.search_stopped and len(results) <= 20:
+                            # Limit to 20 files to prevent hanging
+                            with st.spinner("✨ Generating highlighted documents (this may take a moment)..."):
+                                try:
+                                    manager = SearchManager()
+                                    highlighter = DocumentHighlighter(manager)
+                                    highlighted = highlighter.highlight_all_results(results, keyword, False)
+                                    st.session_state.highlighted_files = highlighted
+                                    st.info(f"✅ Highlighted {len(highlighted)} documents")
+                                except Exception as e:
+                                    st.warning(f"Could not generate highlighted documents: {e}")
+                        elif auto_highlight and len(results) > 20:
+                            st.warning("⚠️ Too many files for auto-highlighting. Download individual files manually.")
+                
                 except Exception as e:
                     st.error(f"Error during search: {str(e)}")
-                    st.session_state.searching = False
                     import traceback
                     st.code(traceback.format_exc())
+                finally:
+                    # CRITICAL: Always set searching to False
+                    st.session_state.searching = False
         
         # Display results
         if st.session_state.processed_results is not None:
@@ -736,20 +787,38 @@ def main():
                         
                         st.markdown("---")
                         
-                        # Download highlighted file
-                        if st.session_state.highlighted_files and file_path in st.session_state.highlighted_files:
-                            highlighted_path = st.session_state.highlighted_files[file_path]
-                            
-                            if os.path.exists(highlighted_path):
-                                with open(highlighted_path, 'rb') as f:
-                                    st.download_button(
-                                        label="📥 Download Highlighted Document",
-                                        data=f,
-                                        file_name=Path(highlighted_path).name,
-                                        mime="application/octet-stream",
-                                        key=f"download_{file_path}",
-                                        use_container_width=True
-                                    )
+                        # Download highlighted file - FIXED: Don't auto-load, generate on demand
+                        if st.button(f"🎨 Generate Highlighted PDF", key=f"gen_highlight_{file_path}", use_container_width=True):
+                            with st.spinner(f"Generating highlighted version of {Path(file_path).name}..."):
+                                try:
+                                    manager = SearchManager()
+                                    highlighter = DocumentHighlighter(manager)
+                                    
+                                    # Generate single file highlight
+                                    output_path = highlighter._generate_output_path(file_path, keyword)
+                                    ext = Path(file_path).suffix.lower()
+                                    searcher = manager.get_searcher(ext)
+                                    
+                                    if searcher:
+                                        success = searcher.highlight_document(file_path, keyword, output_path, False)
+                                        
+                                        if success and os.path.exists(output_path):
+                                            with open(output_path, 'rb') as f:
+                                                st.download_button(
+                                                    label="📥 Download Highlighted Document",
+                                                    data=f,
+                                                    file_name=Path(output_path).name,
+                                                    mime="application/octet-stream",
+                                                    key=f"download_gen_{file_path}",
+                                                    use_container_width=True
+                                                )
+                                            st.success("✅ Highlighted document ready!")
+                                        else:
+                                            st.error("Failed to generate highlighted document")
+                                    else:
+                                        st.error(f"No highlighter available for {ext} files")
+                                except Exception as e:
+                                    st.error(f"Error highlighting: {e}")
                 
                 # Export results to Excel
                 st.markdown("---")
@@ -758,35 +827,39 @@ def main():
                 col1, col2 = st.columns([1, 3])
                 
                 with col1:
-                    if st.button("📥 Export to Excel", use_container_width=True):
-                        df_data = []
-                        for file_path, matches in raw_results.items():
-                            for match in matches:
-                                df_data.append({
-                                    'File Name': match.file_name,
-                                    'File Path': file_path,
-                                    'Page Number': match.page_number,
-                                    'Matched Text': match.matched_text,
-                                    'Context': match.context
-                                })
-                        
-                        df = pd.DataFrame(df_data)
-                        excel_file = Config.OUTPUT_DIR / f"search_results_{keyword[:20].replace(' ', '_')}.xlsx"
-                        df.to_excel(excel_file, index=False, engine='openpyxl')
-                        
-                        st.success(f"✅ Results exported to: {excel_file.name}")
-                        
-                        with open(excel_file, 'rb') as f:
-                            st.download_button(
-                                label="📥 Download Excel Report",
-                                data=f,
-                                file_name=excel_file.name,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
+                    if st.button("📥 Export to Excel", use_container_width=True, key='export_excel_btn'):
+                        try:
+                            df_data = []
+                            for file_path, matches in raw_results.items():
+                                for match in matches:
+                                    df_data.append({
+                                        'File Name': match.file_name,
+                                        'File Path': file_path,
+                                        'Page Number': match.page_number,
+                                        'Matched Text': match.matched_text,
+                                        'Context': match.context
+                                    })
+                            
+                            df = pd.DataFrame(df_data)
+                            excel_file = Config.OUTPUT_DIR / f"search_results_{keyword[:20].replace(' ', '_')}.xlsx"
+                            df.to_excel(excel_file, index=False, engine='openpyxl')
+                            
+                            st.success(f"✅ Results exported to: {excel_file.name}")
+                            
+                            with open(excel_file, 'rb') as f:
+                                st.download_button(
+                                    label="📥 Download Excel Report",
+                                    data=f,
+                                    file_name=excel_file.name,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key='download_excel_report',
+                                    use_container_width=True
+                                )
+                        except Exception as e:
+                            st.error(f"Error exporting: {e}")
                 
                 with col2:
-                    st.info("💡 **Tip:** The Excel report contains all individual matches. The display above shows merged contexts for easier reading.")
+                    st.info("💡 **Tip:** Use 'Generate Highlighted PDF' buttons in each file section to create highlighted versions on demand.")
     
     # ==================== TAB 2: SETTINGS ====================
     with tab2:

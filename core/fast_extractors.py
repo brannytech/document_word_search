@@ -1,12 +1,26 @@
-"""Ultra-fast text extraction using PyMuPDF and multiprocessing"""
+"""Ultra-fast text extraction using PyMuPDF and multiprocessing - FIXED"""
 
-import fitz  # PyMuPDF - 100x faster than PyPDF2
+from pathlib import Path
+from typing import Optional, Tuple, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
+
+# Import extractors - CRITICAL: Must be at module level for multiprocessing
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    PYMUPDF_AVAILABLE = False
+    print("Warning: PyMuPDF not available, falling back to PyPDF2")
+
+try:
+    import PyPDF2
+    PYPDF2_AVAILABLE = True
+except ImportError:
+    PYPDF2_AVAILABLE = False
+
 from docx import Document
 import pypandoc
-from pathlib import Path
-from typing import Optional, Tuple
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing as mp
 
 
 class FastPDFExtractor:
@@ -19,19 +33,37 @@ class FastPDFExtractor:
         Returns: (text, page_count)
         """
         try:
-            doc = fitz.open(file_path)
-            text_parts = []
+            if PYMUPDF_AVAILABLE:
+                doc = fitz.open(file_path)
+                text_parts = []
+                
+                for page in doc:
+                    text = page.get_text("text", sort=True)
+                    if text:
+                        text_parts.append(text)
+                
+                page_count = len(doc)
+                doc.close()
+                
+                return '\n'.join(text_parts), page_count
             
-            for page in doc:
-                # Get text only (skip images for speed)
-                text = page.get_text("text", sort=True)
-                if text:
-                    text_parts.append(text)
+            elif PYPDF2_AVAILABLE:
+                # Fallback to PyPDF2
+                with open(file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text_parts = []
+                    
+                    for page in pdf_reader.pages:
+                        text = page.extract_text()
+                        if text:
+                            text_parts.append(text)
+                    
+                    return '\n'.join(text_parts), len(pdf_reader.pages)
             
-            page_count = len(doc)
-            doc.close()
-            
-            return '\n'.join(text_parts), page_count
+            else:
+                print(f"No PDF extractor available for {file_path}")
+                return "", 0
+                
         except Exception as e:
             print(f"Error extracting PDF {file_path}: {e}")
             return "", 0
@@ -50,7 +82,6 @@ class FastDOCXExtractor:
             doc = Document(file_path)
             text = '\n'.join([para.text for para in doc.paragraphs if para.text])
             
-            # Estimate page count (roughly 3000 chars per page)
             page_count = max(1, len(text) // 3000)
             
             return text, page_count
@@ -77,14 +108,17 @@ class FastDOCExtractor:
             return "", 0
 
 
-def extract_single_file(file_path: str) -> Tuple[str, str, int]:
+def extract_single_file_safe(file_path: str) -> Tuple[str, str, int]:
     """
-    Extract text from a single file (used in multiprocessing)
+    Extract text from a single file - SAFE VERSION for threading
     Returns: (file_path, text, page_count)
     """
     ext = Path(file_path).suffix.lower()
     
     try:
+        if not os.path.exists(file_path):
+            return file_path, "", 0
+        
         if ext == '.pdf':
             text, pages = FastPDFExtractor.extract_text(file_path)
         elif ext == '.docx':
@@ -97,32 +131,38 @@ def extract_single_file(file_path: str) -> Tuple[str, str, int]:
         return file_path, text, pages
     except Exception as e:
         print(f"Error extracting {file_path}: {e}")
+        import traceback
+        traceback.print_exc()
         return file_path, "", 0
 
 
 class MultiProcessExtractor:
-    """Multi-process text extractor for maximum speed"""
+    """Multi-threaded text extractor - FIXED to use threads instead of processes"""
     
     def __init__(self, max_workers: Optional[int] = None):
         if max_workers is None:
-            max_workers = min(mp.cpu_count(), 8)  # Cap at 8 processes
+            max_workers = min(os.cpu_count() or 1, 16)  # Cap at 16
         self.max_workers = max_workers
         self.stop_requested = False
     
-    def extract_batch(self, file_paths: list, progress_callback=None) -> dict:
+    def extract_batch(self, file_paths: list, progress_callback=None) -> Dict[str, Tuple[str, int]]:
         """
-        Extract text from multiple files in parallel
+        Extract text from multiple files in parallel using threads
         Returns: {file_path: (text, page_count)}
         """
         results = {}
         total = len(file_paths)
         completed = 0
         
-        # Use ProcessPoolExecutor for true parallelism
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        if not file_paths:
+            return results
+        
+        # Use ThreadPoolExecutor instead of ProcessPoolExecutor
+        # This avoids multiprocessing issues with PyMuPDF
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all tasks
             futures = {
-                executor.submit(extract_single_file, fp): fp 
+                executor.submit(extract_single_file_safe, fp): fp 
                 for fp in file_paths
             }
             
@@ -131,14 +171,16 @@ class MultiProcessExtractor:
                 if self.stop_requested:
                     # Cancel remaining futures
                     for f in futures:
-                        f.cancel()
+                        if not f.done():
+                            f.cancel()
                     break
                 
                 file_path = futures[future]
                 
                 try:
-                    result_path, text, pages = future.result(timeout=30)
-                    results[result_path] = (text, pages)
+                    result_path, text, pages = future.result(timeout=60)
+                    if text:  # Only add if text was extracted
+                        results[result_path] = (text, pages)
                     
                     completed += 1
                     if progress_callback:
@@ -146,7 +188,11 @@ class MultiProcessExtractor:
                         
                 except Exception as e:
                     print(f"Error processing {file_path}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     completed += 1
+                    if progress_callback:
+                        progress_callback(completed, total, Path(file_path).name)
         
         return results
     

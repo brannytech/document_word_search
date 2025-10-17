@@ -1,4 +1,4 @@
-"""Hybrid search engine combining indexing and fast extraction"""
+"""Hybrid search engine combining indexing and fast extraction - FIXED"""
 
 from typing import Dict, List, Optional, Callable
 from pathlib import Path
@@ -25,6 +25,7 @@ class HybridSearchEngine:
         self.index = DocumentIndex() if index_enabled else None
         self.extractor = MultiProcessExtractor(max_workers=Config.MAX_WORKERS)
         self.stop_requested = False
+        print(f"[HybridSearchEngine] Initialized with mode: {search_mode}, index_enabled: {index_enabled}")
     
     def stop(self):
         """Stop all ongoing operations"""
@@ -46,6 +47,9 @@ class HybridSearchEngine:
         
         Returns: {file_path: [SearchResult, ...]}
         """
+        print(f"[HybridSearchEngine] Starting search for '{keyword}' in {len(files)} files")
+        print(f"[HybridSearchEngine] Mode: {self.search_mode}")
+        
         self.reset_stop()
         
         if self.search_mode == "hybrid":
@@ -64,6 +68,7 @@ class HybridSearchEngine:
         Hybrid mode: Check index first, extract only new/changed files
         FASTEST for repeated searches
         """
+        print(f"[Hybrid] Starting hybrid search")
         results = {}
         
         # Separate indexed and non-indexed files
@@ -79,14 +84,18 @@ class HybridSearchEngine:
                     indexed_files.append(file)
                 else:
                     files_to_extract.append(file)
+            
+            print(f"[Hybrid] Found {len(indexed_files)} indexed files, {len(files_to_extract)} to extract")
         else:
             files_to_extract = files
+            print(f"[Hybrid] No index, extracting all {len(files_to_extract)} files")
         
         total_files = len(files)
         processed = 0
         
         # 1. Search indexed files (instant)
         if indexed_files and not self.stop_requested:
+            print(f"[Hybrid] Searching {len(indexed_files)} indexed files...")
             for file in indexed_files:
                 if self.stop_requested:
                     break
@@ -98,23 +107,29 @@ class HybridSearchEngine:
                     file_results = self._search_text(file_str, text, keyword, case_sensitive, whole_word)
                     if file_results:
                         results[file_str] = file_results
+                        print(f"[Hybrid] Found {len(file_results)} matches in {file.name}")
                 
                 processed += 1
                 if progress_callback:
                     progress_callback(processed, total_files, file.name)
         
-        # 2. Extract and search new files (fast multiprocessing)
+        # 2. Extract and search new files
         if files_to_extract and not self.stop_requested:
+            print(f"[Hybrid] Extracting {len(files_to_extract)} new files...")
+            
             extraction_results = self.extractor.extract_batch(
                 [str(f) for f in files_to_extract],
                 lambda c, t, n: progress_callback(processed + c, total_files, n) if progress_callback else None
             )
+            
+            print(f"[Hybrid] Extraction complete. Got {len(extraction_results)} results")
             
             # Index extracted files
             if self.index:
                 for file_path, (text, page_count) in extraction_results.items():
                     if text and not self.stop_requested:
                         self.index.add_document(file_path, text, page_count)
+                print(f"[Hybrid] Indexed {len(extraction_results)} files")
             
             # Search extracted text
             for file_path, (text, page_count) in extraction_results.items():
@@ -125,11 +140,13 @@ class HybridSearchEngine:
                     file_results = self._search_text(file_path, text, keyword, case_sensitive, whole_word)
                     if file_results:
                         results[file_path] = file_results
+                        print(f"[Hybrid] Found {len(file_results)} matches in {Path(file_path).name}")
                 
                 processed += 1
                 if progress_callback:
                     progress_callback(processed, total_files, Path(file_path).name)
         
+        print(f"[Hybrid] Search complete. Found matches in {len(results)} files")
         return results
     
     def _search_fast_extract(self, files: List[Path], keyword: str,
@@ -139,6 +156,7 @@ class HybridSearchEngine:
         Phase 1 mode: Always extract, no indexing
         FAST for single searches, no persistence
         """
+        print(f"[FastExtract] Starting fast extract mode for {len(files)} files")
         results = {}
         total_files = len(files)
         
@@ -147,6 +165,8 @@ class HybridSearchEngine:
             [str(f) for f in files],
             progress_callback
         )
+        
+        print(f"[FastExtract] Extraction complete. Got {len(extraction_results)} results")
         
         # Search extracted text
         processed = 0
@@ -158,11 +178,13 @@ class HybridSearchEngine:
                 file_results = self._search_text(file_path, text, keyword, case_sensitive, whole_word)
                 if file_results:
                     results[file_path] = file_results
+                    print(f"[FastExtract] Found {len(file_results)} matches in {Path(file_path).name}")
             
             processed += 1
             if progress_callback:
                 progress_callback(processed, total_files, Path(file_path).name)
         
+        print(f"[FastExtract] Search complete. Found matches in {len(results)} files")
         return results
     
     def _search_indexed_only(self, files: List[Path], keyword: str,
@@ -172,9 +194,11 @@ class HybridSearchEngine:
         Phase 2 mode: Only search pre-indexed files
         INSTANT but requires pre-indexing
         """
+        print(f"[IndexedOnly] Starting indexed-only search")
         results = {}
         
         if not self.index:
+            print("[IndexedOnly] No index available!")
             return results
         
         total_files = len(files)
@@ -191,17 +215,22 @@ class HybridSearchEngine:
                     file_results = self._search_text(file_str, text, keyword, case_sensitive, whole_word)
                     if file_results:
                         results[file_str] = file_results
+                        print(f"[IndexedOnly] Found {len(file_results)} matches in {file.name}")
             
             processed += 1
             if progress_callback:
                 progress_callback(processed, total_files, file.name)
         
+        print(f"[IndexedOnly] Search complete. Found matches in {len(results)} files")
         return results
     
     def _search_text(self, file_path: str, text: str, keyword: str,
                     case_sensitive: bool, whole_word: bool) -> List[SearchResult]:
         """Search text for keyword matches"""
         from utils.helpers import create_sentence_context, normalize_keyword
+        
+        if not text or not text.strip():
+            return []
         
         results = []
         
@@ -224,15 +253,24 @@ class HybridSearchEngine:
         regex = re.compile(pattern, flags)
         
         # Find all matches
+        match_count = 0
         for match in regex.finditer(text):
             if self.stop_requested:
                 break
             
+            match_count += 1
             page_num = (match.start() // Config.CHARS_PER_PAGE_ESTIMATE) + 1
-            context, rel_start, rel_end = create_sentence_context(
-                text, match.start(), match.end(),
-                Config.SENTENCES_BEFORE, Config.SENTENCES_AFTER
-            )
+            
+            try:
+                context, rel_start, rel_end = create_sentence_context(
+                    text, match.start(), match.end(),
+                    Config.SENTENCES_BEFORE, Config.SENTENCES_AFTER
+                )
+            except Exception as e:
+                print(f"Error creating context: {e}")
+                context = text[max(0, match.start()-100):min(len(text), match.end()+100)]
+                rel_start = min(100, match.start())
+                rel_end = rel_start + len(match.group())
             
             results.append(SearchResult(
                 file_path=file_path,
@@ -244,6 +282,9 @@ class HybridSearchEngine:
                 absolute_position=match.start(),
                 matched_text=match.group()
             ))
+        
+        if match_count > 0:
+            print(f"[Search] Found {match_count} matches for '{keyword}' in {os.path.basename(file_path)}")
         
         return results
     
@@ -257,13 +298,11 @@ class HybridSearchEngine:
         if not files_to_index:
             return
         
-        # Extract all files
         extraction_results = self.extractor.extract_batch(
             [str(f) for f in files_to_index],
             progress_callback
         )
         
-        # Add to index
         for file_path, (text, page_count) in extraction_results.items():
             if text and not self.stop_requested:
                 self.index.add_document(file_path, text, page_count)
@@ -278,3 +317,5 @@ class HybridSearchEngine:
         """Clear all indexed data"""
         if self.index:
             self.index.clear_index()
+
+            

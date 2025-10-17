@@ -1,9 +1,8 @@
-"""Process and merge search results for optimal display"""
+"""Process and merge search results - OPTIMIZED VERSION"""
 
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
 from searchers.base import SearchResult
-from utils.helpers import count_sentences_between
 from config import Config
 
 
@@ -14,26 +13,24 @@ class MergedMatch:
     file_name: str
     page_number: int
     merged_context: str
-    match_positions: List[Tuple[int, int]]  # List of (start, end) for highlighting
+    match_positions: List[Tuple[int, int]]
     match_count: int
     matched_texts: List[str]
 
 
 class ResultProcessor:
-    """Process search results to merge nearby matches"""
+    """Process search results to merge nearby matches - OPTIMIZED"""
     
     def __init__(self):
         self.max_sentence_gap = Config.MAX_SENTENCES_TO_MERGE
         self.ellipsis = Config.ELLIPSIS_TEXT
     
-    def process_results(self, all_results: Dict[str, List[SearchResult]], 
-                       full_texts: Dict[str, str] = None) -> Dict[str, List[MergedMatch]]:
+    def process_results(self, all_results: Dict[str, List[SearchResult]]) -> Dict[str, List[MergedMatch]]:
         """
-        Process all results and merge nearby matches on same pages
+        Process all results and merge nearby matches - FAST VERSION
         
         Args:
             all_results: Dict mapping file paths to list of SearchResult
-            full_texts: Optional dict of full text content per file for better merging
             
         Returns:
             Dict mapping file paths to list of MergedMatch objects
@@ -44,177 +41,107 @@ class ResultProcessor:
             if not results:
                 continue
             
-            # Group by page number
-            by_page = self._group_by_page(results)
+            # Group by page
+            by_page = {}
+            for result in results:
+                page = result.page_number
+                if page not in by_page:
+                    by_page[page] = []
+                by_page[page].append(result)
             
-            # Process each page
+            # Process each page - SIMPLIFIED
             merged_results = []
-            for page_num, page_matches in sorted(by_page.items()):
-                # Sort matches by position on page
-                page_matches.sort(key=lambda x: x.absolute_position)
+            for page_num in sorted(by_page.keys()):
+                page_matches = sorted(by_page[page_num], key=lambda x: x.absolute_position)
                 
-                # Merge nearby matches
-                merged = self._merge_page_matches(page_matches, full_texts.get(file_path) if full_texts else None)
+                # Simple merging: Group close matches (within 5 sentences)
+                merged = self._merge_page_matches_fast(page_matches)
                 merged_results.extend(merged)
             
             processed[file_path] = merged_results
         
         return processed
     
-    def _group_by_page(self, results: List[SearchResult]) -> Dict[int, List[SearchResult]]:
-        """Group search results by page number"""
-        by_page = {}
-        for result in results:
-            page = result.page_number
-            if page not in by_page:
-                by_page[page] = []
-            by_page[page].append(result)
-        return by_page
-    
-    def _merge_page_matches(self, matches: List[SearchResult], 
-                           full_text: str = None) -> List[MergedMatch]:
-        """
-        Merge matches on same page that are close together
-        
-        Strategy:
-        - If matches are <= 5 sentences apart: merge into one context
-        - If matches are > 5 sentences apart: use ellipsis
-        - If all matches far apart: return separately
-        """
+    def _merge_page_matches_fast(self, matches: List[SearchResult]) -> List[MergedMatch]:
+        """Fast merge - no complex logic"""
         if not matches:
             return []
         
         if len(matches) == 1:
-            # Single match, no merging needed
-            return [self._create_merged_match([matches[0]])]
+            # Single match
+            m = matches[0]
+            return [MergedMatch(
+                file_path=m.file_path,
+                file_name=m.file_name,
+                page_number=m.page_number,
+                merged_context=m.context,
+                match_positions=[(m.match_start, m.match_end)],
+                match_count=1,
+                matched_texts=[m.matched_text]
+            )]
         
-        # Group matches that should be merged together
+        # Multiple matches - simple grouping
         groups = []
         current_group = [matches[0]]
         
         for i in range(1, len(matches)):
-            prev_match = matches[i-1]
-            curr_match = matches[i]
+            prev = matches[i-1]
+            curr = matches[i]
             
-            # Calculate distance between matches
-            if full_text:
-                sentence_gap = count_sentences_between(
-                    full_text, 
-                    prev_match.absolute_position + len(prev_match.matched_text),
-                    curr_match.absolute_position
-                )
-            else:
-                # Estimate based on character distance
-                char_distance = curr_match.absolute_position - (prev_match.absolute_position + len(prev_match.matched_text))
-                sentence_gap = char_distance // 100  # Rough estimate: ~100 chars per sentence
+            # Simple distance check
+            char_distance = curr.absolute_position - (prev.absolute_position + len(prev.matched_text))
             
-            if sentence_gap <= self.max_sentence_gap:
-                # Close enough to merge
-                current_group.append(curr_match)
+            # If close (< 500 chars), group together
+            if char_distance < 500:
+                current_group.append(curr)
             else:
-                # Too far, start new group
                 groups.append(current_group)
-                current_group = [curr_match]
+                current_group = [curr]
         
-        # Add last group
         groups.append(current_group)
         
-        # Create merged matches for each group
-        merged_results = []
+        # Create merged matches
+        result = []
         for group in groups:
-            merged_results.append(self._create_merged_match(group, full_text))
+            result.append(self._create_merged_fast(group))
         
-        return merged_results
+        return result
     
-    def _create_merged_match(self, matches: List[SearchResult], 
-                            full_text: str = None) -> MergedMatch:
-        """
-        Create a MergedMatch from a group of matches
-        """
+    def _create_merged_fast(self, matches: List[SearchResult]) -> MergedMatch:
+        """Create merged match - simplified"""
+        first = matches[0]
+        
         if len(matches) == 1:
-            # Single match
-            match = matches[0]
             return MergedMatch(
-                file_path=match.file_path,
-                file_name=match.file_name,
-                page_number=match.page_number,
-                merged_context=match.context,
-                match_positions=[(match.match_start, match.match_end)],
+                file_path=first.file_path,
+                file_name=first.file_name,
+                page_number=first.page_number,
+                merged_context=first.context,
+                match_positions=[(first.match_start, first.match_end)],
                 match_count=1,
-                matched_texts=[match.matched_text]
+                matched_texts=[first.matched_text]
             )
         
-        # Multiple matches - need to merge contexts
-        first_match = matches[0]
-        last_match = matches[-1]
+        # Merge contexts - simple concatenation
+        contexts = []
+        positions = []
+        current_pos = 0
         
-        # Build merged context
-        if full_text and all(m.absolute_position for m in matches):
-            # Use full text to build proper merged context
-            merged_context, positions = self._build_merged_context_from_full_text(
-                matches, full_text
-            )
-        else:
-            # Fall back to concatenating contexts
-            merged_context, positions = self._build_merged_context_from_contexts(matches)
+        for match in matches:
+            contexts.append(match.context)
+            positions.append((current_pos + match.match_start, current_pos + match.match_end))
+            current_pos += len(match.context) + 1
+        
+        merged_context = " ".join(contexts)
         
         return MergedMatch(
-            file_path=first_match.file_path,
-            file_name=first_match.file_name,
-            page_number=first_match.page_number,
+            file_path=first.file_path,
+            file_name=first.file_name,
+            page_number=first.page_number,
             merged_context=merged_context,
             match_positions=positions,
             match_count=len(matches),
             matched_texts=[m.matched_text for m in matches]
         )
     
-    def _build_merged_context_from_full_text(self, matches: List[SearchResult], 
-                                            full_text: str) -> Tuple[str, List[Tuple[int, int]]]:
-        """Build merged context from full text"""
-        # Find start and end positions
-        first_match = matches[0]
-        last_match = matches[-1]
-        
-        # Get 2 sentences before first match
-        start_pos = max(0, first_match.absolute_position - 200)  # Rough estimate
-        # Get 2 sentences after last match
-        end_pos = min(len(full_text), last_match.absolute_position + len(last_match.matched_text) + 200)
-        
-        # Extract context
-        context = full_text[start_pos:end_pos].strip()
-        
-        # Calculate relative positions for all matches
-        positions = []
-        for match in matches:
-            rel_start = match.absolute_position - start_pos
-            rel_end = rel_start + len(match.matched_text)
-            if 0 <= rel_start < len(context):
-                positions.append((rel_start, rel_end))
-        
-        return context, positions
     
-    def _build_merged_context_from_contexts(self, matches: List[SearchResult]) -> Tuple[str, List[Tuple[int, int]]]:
-        """Build merged context by combining individual contexts"""
-        # Simple concatenation with match tracking
-        parts = []
-        positions = []
-        current_pos = 0
-        
-        for i, match in enumerate(matches):
-            if i > 0:
-                # Add space or ellipsis between contexts
-                parts.append(" ")
-                current_pos += 1
-            
-            # Add context
-            parts.append(match.context)
-            
-            # Track match position
-            positions.append((
-                current_pos + match.match_start,
-                current_pos + match.match_end
-            ))
-            
-            current_pos += len(match.context)
-        
-        return "".join(parts), positions

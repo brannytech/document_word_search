@@ -22,5 +22,5 @@
     "index_path": "document_index.db",
     "rebuild_on_startup": false
   },
-  "profile": "custom"
+  "profile": "balanced"
 }

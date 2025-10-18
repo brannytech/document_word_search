@@ -650,6 +650,16 @@ def main():
             elif not os.path.exists(st.session_state.selected_directory):
                 st.error(f"Directory not found: {st.session_state.selected_directory}")
             else:
+                st.session_state.search_results = None
+                st.session_state.processed_results = None
+                st.session_state.highlighted_files = {}
+                st.session_state.search_stopped = False
+
+                # Clear extraction cache from previous search
+                if hasattr(st.session_state, 'search_engine') and st.session_state.search_engine:
+                    if hasattr(st.session_state.search_engine.extractor, 'clear_cache'):
+                        st.session_state.search_engine.extractor.clear_cache()
+                
                 st.session_state.searching = True
                 st.session_state.search_stopped = False
                 

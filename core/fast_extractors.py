@@ -144,6 +144,7 @@ class MultiProcessExtractor:
             max_workers = min(os.cpu_count() or 1, 16)  # Cap at 16
         self.max_workers = max_workers
         self.stop_requested = False
+        self.last_extraction = {}  # NEW: Keep last extraction in memory
     
     def extract_batch(self, file_paths: list, progress_callback=None) -> Dict[str, Tuple[str, int]]:
         """
@@ -194,8 +195,18 @@ class MultiProcessExtractor:
                     if progress_callback:
                         progress_callback(completed, total, Path(file_path).name)
         
+        # New: Store results in memory
+        self.last_extraction = results
         return results
     
+    def get_cached_results(self) -> Dict[str, Tuple[str, int]]:
+        """Get last extraction results from memory cache"""
+        return self.last_extraction
+    
+    def clear_cache(self):
+        """Clear in-memory cache"""
+        self.last_extraction = {}
+
     def stop(self):
         """Stop extraction"""
         self.stop_requested = True

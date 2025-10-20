@@ -3,5 +3,4 @@ core/__pycache__/result_processor.cpython-312.pyc
 search_results/
 
 venv/
-
-search_results/*.pdf
+search_results/

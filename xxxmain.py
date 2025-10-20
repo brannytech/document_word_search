@@ -7,6 +7,9 @@ import os
 from typing import List, Tuple
 import psutil
 
+from core.hybrid_search_engine import HybridSearchEngine
+from core.document_index import DocumentIndex
+
 from core.search_manager import SearchManager
 from core.result_processor import ResultProcessor
 from core.highlighter import DocumentHighlighter
@@ -77,6 +80,120 @@ def build_highlighted_html(context: str, match_positions: List[Tuple[int, int]])
         html_parts.append(f'<span style="color: #000000;">{context[last_end:]}</span>')
     
     return ''.join(html_parts)
+
+
+def render_index_settings_section(settings):
+    """Add this to render_settings_tab() function"""
+    st.markdown("---")
+    st.subheader("🗂️ Index & Search Mode Settings")
+    
+    # Search Mode Selection
+    search_mode_options = {
+        'hybrid': '🔥 Hybrid (Recommended) - Index + Fast Extract',
+        'fast_extract': '⚡ Phase 1: Fast Extract Only (No Index)',
+        'indexed_only': '📚 Phase 2: Indexed Search Only (Pre-indexed files)'
+    }
+    
+    current_mode = settings.performance.search_mode
+    
+    selected_mode = st.selectbox(
+        "Search Mode:",
+        options=list(search_mode_options.keys()),
+        format_func=lambda x: search_mode_options[x],
+        index=list(search_mode_options.keys()).index(current_mode),
+        key='search_mode_selector',
+        help=(
+            "**Hybrid**: Best of both - uses index for known files, extracts new ones (FASTEST)\n\n"
+            "**Fast Extract**: Always extracts text, no indexing (Good for one-time searches)\n\n"
+            "**Indexed Only**: Only searches pre-indexed files (INSTANT but requires indexing)"
+        )
+    )
+    
+    if selected_mode != current_mode:
+        settings.performance.search_mode = selected_mode
+        settings.profile = 'custom'
+        st.session_state.settings_changed = True
+    
+    # Mode descriptions
+    if selected_mode == 'hybrid':
+        st.info("🔥 **Hybrid Mode (Default)**\n"
+                "- First search: Builds index (20-30s for 200 files)\n"
+                "- Second search: Uses index (< 1s)\n"
+                "- New files: Auto-indexed\n"
+                "- **Best for: Regular use**")
+    elif selected_mode == 'fast_extract':
+        st.info("⚡ **Phase 1: Fast Extract**\n"
+                "- Uses PyMuPDF + Multiprocessing\n"
+                "- No indexing, no persistence\n"
+                "- Each search: 10-20s for 200 files\n"
+                "- **Best for: One-time searches**")
+    else:
+        st.info("📚 **Phase 2: Indexed Only**\n"
+                "- Only searches pre-indexed files\n"
+                "- Instant results (< 1s)\n"
+                "- Requires manual indexing\n"
+                "- **Best for: Static document sets**")
+    
+    # Index Settings
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        index_enabled = st.checkbox(
+            "Enable Document Index",
+            value=settings.index.enabled,
+            help="Persistent index for instant repeat searches",
+            key='index_enabled_checkbox'
+        )
+        
+        if index_enabled != settings.index.enabled:
+            settings.index.enabled = index_enabled
+            settings.profile = 'custom'
+            st.session_state.settings_changed = True
+    
+    with col2:
+        auto_index = st.checkbox(
+            "Auto-Index New Files",
+            value=settings.index.auto_index,
+            disabled=not index_enabled,
+            help="Automatically index files during search",
+            key='auto_index_checkbox'
+        )
+        
+        if auto_index != settings.index.auto_index:
+            settings.index.auto_index = auto_index
+            settings.profile = 'custom'
+            st.session_state.settings_changed = True
+    
+    # Index Statistics and Management
+    if index_enabled:
+        st.markdown("**Index Statistics:**")
+        
+        try:
+            index = DocumentIndex(settings.index.index_path)
+            stats = index.get_stats()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Indexed Files", stats['indexed_files'])
+            col2.metric("Index Size", f"{stats['db_size_mb']:.1f} MB")
+            col3.metric("Content Size", f"{stats['total_size_mb']:.1f} MB")
+            
+            # Index management buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ Clear Index", key='clear_index_button'):
+                    index.clear_index()
+                    st.success("Index cleared!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🔄 Rebuild Index", key='rebuild_index_button'):
+                    st.info("Index will be rebuilt on next search")
+                    settings.index.rebuild_on_startup = True
+                    st.session_state.settings_changed = True
+                    
+        except Exception as e:
+            st.error(f"Could not load index stats: {e}")
 
 
 def render_settings_tab():

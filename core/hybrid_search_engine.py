@@ -246,14 +246,17 @@ class HybridSearchEngine:
             pattern_parts.append(escaped_word)
         
         pattern = r'[-\s]*'.join(pattern_parts)
-        if whole_word:
-            pattern = r'\b' + pattern + r'\b'
+        #if whole_word:
+            #pattern = r'\b' + pattern + r'\b'
+        
+        pattern = r'\b' + pattern + r'\b'  # ALWAYS use word boundaries to prevent partial matches
         
         flags = re.IGNORECASE
         regex = re.compile(pattern, flags)
         
         # Find all matches
         match_count = 0
+    
         for match in regex.finditer(text):
             if self.stop_requested:
                 break

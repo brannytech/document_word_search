@@ -27,6 +27,11 @@ class Config:
     ELLIPSIS_TEXT = "... [gap] ..."
     SENTENCES_BEFORE = 2
     SENTENCES_AFTER = 2
+
+    MIN_SENTENCES_CONTEXT = 0
+    MAX_SENTENCES_CONTEXT = 10
+
+    
     
     # UI settings
     PAGE_TITLE = "📄 Document Keyword Search Tool"

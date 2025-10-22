@@ -6,9 +6,9 @@
     "search_mode": "hybrid"
   },
   "context": {
-    "sentences_before": 2,
-    "sentences_after": 2,
-    "max_merge_distance": 5
+    "sentences_before": 5,
+    "sentences_after": 5,
+    "max_merge_distance": 3
   },
   "cache": {
     "enabled": true,
@@ -22,5 +22,5 @@
     "index_path": "document_index.db",
     "rebuild_on_startup": false
   },
-  "profile": "balanced"
+  "profile": "custom"
 }

@@ -7,6 +7,27 @@ import os
 from typing import List, Tuple
 import psutil
 
+from datetime import datetime
+# import reportlab  --- IGNORE ---
+
+
+
+#"""
+#Phase 1(b): Export All Results to Single Document
+
+#Add this to app.py after the imports
+#"""
+
+from docx import Document
+from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import PyPDF2
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
+
 from core.hybrid_search_engine import HybridSearchEngine
 from core.document_index import DocumentIndex
 from core.result_processor import ResultProcessor
@@ -17,6 +38,232 @@ from core.cache_manager import TextCache
 from core.text_extractor import TextExtractor
 from config import Config
 from utils.helpers import get_file_size, get_all_files
+
+
+
+def export_combined_results_to_docx(results, keyword, output_path):
+    """
+    Export all search results to a single DOCX file with proper formatting
+    
+    Args:
+        results: Dictionary of search results {file_path: [SearchResult, ...]}
+        keyword: Search keyword used
+        output_path: Path to save the output file
+    
+    Returns:
+        Path to the created file
+    """
+    doc = Document()
+    
+    # Add title
+    title = doc.add_heading(f'Search Results for: "{keyword}"', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    # Add metadata
+    doc.add_paragraph(f'Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+    doc.add_paragraph(f'Total files with matches: {len(results)}')
+    doc.add_paragraph(f'Total matches: {sum(len(r) for r in results.values())}')
+    doc.add_paragraph('')
+    
+    # Add horizontal line
+    doc.add_paragraph('_' * 80)
+    doc.add_paragraph('')
+    
+    # Process each file
+    for file_path, matches in results.items():
+        file_name = Path(file_path).name
+        
+        # File header
+        file_heading = doc.add_heading(f'📄 {file_name}', level=1)
+        file_heading_format = file_heading.runs[0]
+        file_heading_format.font.color.rgb = RGBColor(0, 102, 204)
+        
+        doc.add_paragraph(f'File: {file_path}')
+        doc.add_paragraph(f'Matches found: {len(matches)}')
+        doc.add_paragraph('')
+        
+        # Group matches by page
+        matches_by_page = {}
+        for match in matches:
+            page = match.page_number
+            if page not in matches_by_page:
+                matches_by_page[page] = []
+            matches_by_page[page].append(match)
+        
+        # Add matches page by page
+        for page_num in sorted(matches_by_page.keys()):
+            page_matches = matches_by_page[page_num]
+            
+            # Page subheading
+            page_heading = doc.add_heading(f'Page {page_num}', level=2)
+            
+            # Add each match
+            for i, match in enumerate(page_matches, 1):
+                # Create paragraph with the context
+                p = doc.add_paragraph()
+                
+                # Add match number
+                run = p.add_run(f'[Match {i}] ')
+                run.bold = True
+                run.font.color.rgb = RGBColor(102, 102, 102)
+                
+                # Add context with citation
+                context_text = match.context.strip()
+                p.add_run(context_text)
+                
+                # Add page citation at the end (smaller, superscript-style)
+                citation_run = p.add_run(f' (page {page_num})')
+                citation_run.font.size = Pt(9)
+                citation_run.font.color.rgb = RGBColor(128, 128, 128)
+                citation_run.italic = True
+                
+                # Add spacing
+                doc.add_paragraph('')
+            
+            # Separator between pages
+            doc.add_paragraph('─' * 60)
+            doc.add_paragraph('')
+        
+        # File separator
+        doc.add_paragraph('')
+        doc.add_paragraph('═' * 80)
+        doc.add_paragraph('')
+    
+    # Save document
+    doc.save(output_path)
+    return output_path
+
+
+def export_combined_results_to_pdf(results, keyword, output_path):
+    """
+    Export all search results to a single PDF file with proper formatting
+    
+    Args:
+        results: Dictionary of search results {file_path: [SearchResult, ...]}
+        keyword: Search keyword used
+        output_path: Path to save the output file
+    
+    Returns:
+        Path to the created file
+    """
+    from datetime import datetime
+    
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=letter,
+        rightMargin=inch,
+        leftMargin=inch,
+        topMargin=inch,
+        bottomMargin=inch
+    )
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    
+    # Define styles
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor='#0066CC',
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    file_heading_style = ParagraphStyle(
+        'FileHeading',
+        parent=styles['Heading1'],
+        fontSize=16,
+        textColor='#0066CC',
+        spaceAfter=12,
+        spaceBefore=12
+    )
+    
+    page_heading_style = ParagraphStyle(
+        'PageHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor='#333333',
+        spaceAfter=8,
+        spaceBefore=8
+    )
+    
+    context_style = ParagraphStyle(
+        'Context',
+        parent=styles['BodyText'],
+        fontSize=11,
+        leading=14,
+        spaceAfter=10,
+        alignment=TA_JUSTIFY
+    )
+    
+    citation_style = ParagraphStyle(
+        'Citation',
+        parent=styles['BodyText'],
+        fontSize=9,
+        textColor='#808080',
+        italic=True
+    )
+    
+    # Add title
+    elements.append(Paragraph(f'Search Results for: "{keyword}"', title_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Add metadata
+    metadata_text = f"""
+    Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}<br/>
+    Total files with matches: {len(results)}<br/>
+    Total matches: {sum(len(r) for r in results.values())}
+    """
+    elements.append(Paragraph(metadata_text, styles['Normal']))
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Process each file
+    for file_idx, (file_path, matches) in enumerate(results.items()):
+        file_name = Path(file_path).name
+        
+        # File header
+        elements.append(Paragraph(f'📄 {file_name}', file_heading_style))
+        elements.append(Paragraph(f'File: {file_path}', styles['Normal']))
+        elements.append(Paragraph(f'Matches found: {len(matches)}', styles['Normal']))
+        elements.append(Spacer(1, 0.2*inch))
+        
+        # Group matches by page
+        matches_by_page = {}
+        for match in matches:
+            page = match.page_number
+            if page not in matches_by_page:
+                matches_by_page[page] = []
+            matches_by_page[page].append(match)
+        
+        # Add matches page by page
+        for page_num in sorted(matches_by_page.keys()):
+            page_matches = matches_by_page[page_num]
+            
+            # Page subheading
+            elements.append(Paragraph(f'Page {page_num}', page_heading_style))
+            
+            # Add each match
+            for i, match in enumerate(page_matches, 1):
+                context_text = match.context.strip().replace('<', '&lt;').replace('>', '&gt;')
+                
+                match_text = f'<b>[Match {i}]</b> {context_text} <i><font size="9" color="#808080">(page {page_num})</font></i>'
+                elements.append(Paragraph(match_text, context_style))
+            
+            elements.append(Spacer(1, 0.15*inch))
+        
+        # File separator
+        if file_idx < len(results) - 1:
+            elements.append(Spacer(1, 0.2*inch))
+            elements.append(PageBreak())
+    
+    # Build PDF
+    doc.build(elements)
+    return output_path
+
 
 # Page configuration
 st.set_page_config(
@@ -236,8 +483,9 @@ def render_settings_tab():
     st.header("⚙️ Advanced Settings")
     
     settings = st.session_state.user_settings
-    
+
     # Performance Profile Selection
+    
     st.subheader("📊 Performance Profile")
     
     profile_options = {
@@ -357,8 +605,8 @@ def render_settings_tab():
     with col2:
         sentences_after = st.slider(
             "Sentences After Match",
-            min_value=1,
-            max_value=5,
+            min_value=0,
+            max_value=10,
             value=settings.context.sentences_after,
             key='sentences_after_slider'
         )
@@ -636,12 +884,21 @@ def main():
         
         # Handle stop button
         if stop_button and st.session_state.searching:
-            if hasattr(st.session_state, 'search_engine') and st.session_state.search_engine:
-                st.session_state.search_engine.stop()
-            
+
+            # Set stop flag in search engine
             st.session_state.searching = False
             st.session_state.search_stopped = True
+
+            # Stop the search engine
+            if hasattr(st.session_state, 'search_engine') and st.session_state.search_engine:
+                st.session_state.search_engine.stop()
+
+            
+            # Force a rerun to update UI
+            #st.session_state.searching = False
+            #st.session_state.search_stopped = True
             st.warning("⏹️ Search stopped by user")
+            st.rerun()
         
         # Main content area - Search
         if search_button:
@@ -680,6 +937,14 @@ def main():
                     # Clear progress indicators
                     progress_container.empty()
                     status_container.empty()
+
+                    # Check if search was stopped
+                    if st.session_state.get('search_stopped', False):
+                        st.session_state.searching = False
+                        st.warning("⏹️ Search stopped. Showing partial results.")
+
+                    else:
+                        st.session_state.searching = False
                     
                     if results is None:
                         st.session_state.searching = False
@@ -735,10 +1000,12 @@ def main():
                         elif auto_highlight and len(results) > 20:
                             st.warning("⚠️ Too many files for auto-highlighting. Download individual files manually.")
                 
+                
                 except Exception as e:
                     st.error(f"Error during search: {str(e)}")
                     import traceback
                     st.code(traceback.format_exc())
+                
                 finally:
                     # CRITICAL: Always set searching to False
                     st.session_state.searching = False
@@ -829,12 +1096,16 @@ def main():
                                         st.error(f"No highlighter available for {ext} files")
                                 except Exception as e:
                                     st.error(f"Error highlighting: {e}")
+
+
+
+            
                 
                 # Export results to Excel
                 st.markdown("---")
                 st.subheader("📊 Export Results")
                 
-                col1, col2 = st.columns([1, 3])
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     if st.button("📥 Export to Excel", use_container_width=True, key='export_excel_btn'):
@@ -869,7 +1140,59 @@ def main():
                             st.error(f"Error exporting: {e}")
                 
                 with col2:
-                    st.info("💡 **Tip:** Use 'Generate Highlighted PDF' buttons in each file section to create highlighted versions on demand.")
+                    if st.button("📋 Export to DOCX", use_container_width=True, key='export_docx_btn'):
+                        try:
+                            from datetime import datetime
+                            docx_file = Config.OUTPUT_DIR / f"combined_results_{keyword[:20].replace(' ', '_')}.docx"
+
+                            export_combined_results_to_docx(
+                                raw_results, keyword, str(docx_file))
+                            st.success(f"✅ Combined DOCX created")
+                            with open(docx_file, 'rb') as f:
+                                st.download_button(
+                                    label="📥 Download Combined DOCX",
+                                    data=f,
+                                    file_name=docx_file.name,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key='download_docx_report',
+                                    use_container_width=True
+                                )
+
+                        except Exception as e:
+                            st.error(f"Error exporting to DOCX: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+
+                with col3:
+
+                    if st.button("📕 Export to PDF", use_container_width=True, key='export_pdf_btn'):
+
+                        try:
+                            from datetime import datetime
+                            pdf_file = Config.OUTPUT_DIR / f"combined_results_{keyword[:20].replace(' ', '_')}.pdf"
+            
+                            export_combined_results_to_pdf(raw_results, keyword, str(pdf_file))
+            
+                            st.success(f"✅ Combined PDF created!")
+            
+                            with open(pdf_file, 'rb') as f:
+                                st.download_button(
+                                    label="📥 Download PDF",
+                                    data=f,
+                                    file_name=pdf_file.name,
+                                    mime="application/pdf",
+                                    key='download_pdf_report',
+                                    use_container_width=True
+                                )
+
+                        except Exception as e:
+                            st.error(f"Error exporting to PDF: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+
+                st.info("💡 **Tip:** The DOCX and PDF exports combine all results into a single document with file headers and page citations.")
+                                        
+                                    #st.info("💡 **Tip:** Use 'Generate Highlighted PDF' buttons in each file section to create highlighted versions on demand.")
     
     # ==================== TAB 2: SETTINGS ====================
     with tab2:

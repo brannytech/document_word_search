@@ -1,10 +1,9 @@
 .snapshots/
 core/__pycache__/result_processor.cpython-312.pyc
 search_results/
-
 venv/
-document_index.db
 app_log.txt/
 temp/
 cache/
 __pycache__/
+document_index.db/

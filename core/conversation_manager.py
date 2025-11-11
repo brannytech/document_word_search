@@ -37,7 +37,7 @@ class ConversationManager:
         self.max_history = max_history
         self.messages: List[Message] = []
         self.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        print(f"[ConversationManager] Initialized with conversation ID: {self.conversation_id}")
+        print(f"[ConversationManager] Initialized (ID: {self.conversation_id})")
     
     def add_message(self, role: str, content: str, citations: Optional[List[Dict]] = None):
         """
@@ -60,7 +60,7 @@ class ConversationManager:
         if len(self.messages) > self.max_history:
             self.messages = self.messages[-self.max_history:]
         
-        print(f"[ConversationManager] Added {role} message. Total messages: {len(self.messages)}")
+        print(f"[ConversationManager] Added {role} message. Total: {len(self.messages)}")
     
     def get_history(self, max_messages: Optional[int] = None) -> List[Dict]:
         """
@@ -102,21 +102,7 @@ class ConversationManager:
         """Clear all conversation history"""
         self.messages = []
         self.conversation_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        print(f"[ConversationManager] Cleared history. New conversation ID: {self.conversation_id}")
-    
-    def get_last_user_message(self) -> Optional[str]:
-        """Get the last user message"""
-        for msg in reversed(self.messages):
-            if msg.role == 'user':
-                return msg.content
-        return None
-    
-    def get_last_assistant_message(self) -> Optional[Dict]:
-        """Get the last assistant message with citations"""
-        for msg in reversed(self.messages):
-            if msg.role == 'assistant':
-                return msg.to_dict()
-        return None
+        print(f"[ConversationManager] Cleared history. New ID: {self.conversation_id}")
     
     def export_conversation(self, output_dir: str = "conversations") -> str:
         """
@@ -145,11 +131,11 @@ class ConversationManager:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(conversation_data, f, indent=2, ensure_ascii=False)
             
-            print(f"[ConversationManager] Exported conversation to: {filepath}")
+            print(f"[ConversationManager] Exported to: {filepath}")
             return str(filepath)
             
         except Exception as e:
-            print(f"[ConversationManager] Error exporting conversation: {e}")
+            print(f"[ConversationManager] Error exporting: {e}")
             return ""
     
     def get_stats(self) -> Dict:
@@ -169,28 +155,3 @@ class ConversationManager:
             'total_citations': total_citations,
             'conversation_id': self.conversation_id
         }
-    
-    def format_for_display(self) -> List[Dict]:
-        """Format conversation for UI display"""
-        formatted = []
-        
-        for msg in self.messages:
-            display_msg = {
-                'role': msg.role,
-                'content': msg.content,
-                'timestamp': msg.timestamp,
-                'citations': []
-            }
-            
-            # Format citations for display
-            if msg.citations:
-                for citation in msg.citations:
-                    display_msg['citations'].append({
-                        'file_name': citation.get('file_name', 'Unknown'),
-                        'page': citation.get('page_number', 'N/A'),
-                        'excerpt': citation.get('chunk', citation.get('context', ''))[:200] + '...'
-                    })
-            
-            formatted.append(display_msg)
-        
-        return formatted

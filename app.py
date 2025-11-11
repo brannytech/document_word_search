@@ -7,7 +7,7 @@ import os
 from typing import List, Tuple
 import psutil
 
-from datetime import datetime
+# from datetime import datetime  # Removed unused import
 # import reportlab  --- IGNORE ---
 
 
@@ -19,9 +19,9 @@ from datetime import datetime
 #"""
 
 from docx import Document
-from docx.shared import Pt, RGBColor, Inches
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-import PyPDF2
+# import PyPDF2  # Removed unused import
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -33,11 +33,18 @@ from core.document_index import DocumentIndex
 from core.result_processor import ResultProcessor
 from core.highlighter import DocumentHighlighter
 from core.search_manager import SearchManager
-from core.settings_manager import SettingsManager, UserSettings
+from core.settings_manager import SettingsManager
 from core.cache_manager import TextCache
-from core.text_extractor import TextExtractor
+# from core.text_extractor import TextExtractor  # Removed unused import
 from config import Config
 from utils.helpers import get_file_size, get_all_files
+
+
+# Import for RAG TAB
+#from core.vector_store import DocumentVectorStore
+#from core.llm_client import OllamaClient
+#from core.rag_engine import RAGEngine
+#from core.conversation_manager import ConversationManager
 
 
 
@@ -95,7 +102,7 @@ def export_combined_results_to_docx(results, keyword, output_path):
             page_matches = matches_by_page[page_num]
             
             # Page subheading
-            page_heading = doc.add_heading(f'Page {page_num}', level=2)
+            doc.add_heading(f'Page {page_num}', level=2)
             
             # Add each match
             for i, match in enumerate(page_matches, 1):
@@ -200,13 +207,13 @@ def export_combined_results_to_pdf(results, keyword, output_path):
         alignment=TA_JUSTIFY
     )
     
-    citation_style = ParagraphStyle(
-        'Citation',
-        parent=styles['BodyText'],
-        fontSize=9,
-        textColor='#808080',
-        italic=True
-    )
+    # citation_style = ParagraphStyle(
+    #     'Citation',
+    #     parent=styles['BodyText'],
+    #     fontSize=9,
+    #     textColor='#808080',
+    #     italic=True
+    # )
     
     # Add title
     elements.append(Paragraph(f'Search Results for: "{keyword}"', title_style))
@@ -307,6 +314,18 @@ if 'selected_directory' not in st.session_state:
     st.session_state.selected_directory = "./documents"
 if 'folder_picker_clicked' not in st.session_state:
     st.session_state.folder_picker_clicked = False
+
+
+# RAG Engine Initialization
+if 'rag_initialized' not in st.session_state:
+    st.session_state.rag_initialized = False
+
+if 'rag_engine' not in st.session_state:
+    st.session_state.rag_engine = None
+
+if 'chat_messages' not in st.session_state:
+    st.session_state.chat_messages = []
+
 
 
 def build_highlighted_html(context: str, match_positions: List[Tuple[int, int]]) -> str:
@@ -768,7 +787,8 @@ def main():
     st.markdown("Search for keywords across PDF, DOCX, and DOC files with **ultra-fast hybrid search**, **parallel processing**, and **persistent indexing**")
     
     # Create tabs
-    tab1, tab2 = st.tabs(["🔍 Search", "⚙️ Settings"])
+    #tab1, tab2 = st.tabs(["🔍 Search", "⚙️ Settings"])
+    tab1, tab2, tab3 = st.tabs(["🔍 Search", "⚙️ Settings", "💬 Chat with Documents"])
     
     # ==================== TAB 1: SEARCH ====================
     with tab1:
@@ -1198,6 +1218,513 @@ def main():
     with tab2:
         render_settings_tab()
 
+
+    # ==================== TAB 3: CHAT WITH DOCUMENTS ====================
+    # ==================== TAB 3: CHAT WITH DOCUMENTS ====================
+ # ==================== TAB 3: CHAT WITH DOCUMENTS ====================
+    with tab3:
+        st.header("💬 Chat with Your Documents")
+        st.markdown("Ask questions and get AI-powered answers from your documents")
+        
+        # Check if documents exist first
+        document_dir = st.session_state.get('selected_directory', './documents')
+        has_documents = False
+        files = []
+        
+        if os.path.exists(document_dir):
+            files = get_all_files(document_dir, Config.SUPPORTED_EXTENSIONS)
+            has_documents = len(files) > 0
+        
+        # Initialize flag check
+        if not st.session_state.get('rag_initialized', False):
+            # Show initialization page
+            st.info("🚀 **RAG system not initialized yet.**")
+            
+            # Check for documents FIRST
+            if not has_documents:
+                st.warning("⚠️ **No documents found!**")
+                st.markdown(f"""
+                Please ensure you have documents in the directory: `{document_dir}`
+                
+                You can:
+                1. Go to the **Search tab** to select a different directory
+                2. Add PDF, DOCX, or DOC files to `{document_dir}`
+                3. Come back here to initialize RAG
+                """)
+                return  # Stop here if no documents
+            
+            st.success(f"✅ Found {len(files)} documents ready to index!")
+            
+            st.markdown("### 📋 Prerequisites Check:")
+            st.markdown("Before initializing, ensure you have:")
+            
+            # Check 1: Documents (already done)
+            st.markdown(f"1. ✅ **Ollama installed** → [Download](https://ollama.com/download)")
+            st.markdown(f"2. ✅ **A model pulled** → Run in terminal: `ollama pull llama3.2`")
+            st.markdown(f"3. ✅ **Documents ready** → {len(files)} files found")
+            
+            st.info("**Note:** First-time setup downloads embedding model (~90MB, one-time). This takes 1-2 minutes. Subsequent uses are instant.")
+            
+            # Check if Ollama is available - FIXED VERSION
+            ollama_available = False
+            ollama_models = []
+            ollama_error = None
+            
+            try:
+                import ollama
+                
+                # Try to list models with better error handling
+                try:
+                    models_response = ollama.list()
+                    
+                    # Handle different response formats
+                    if isinstance(models_response, dict):
+                        model_list = models_response.get('models', [])
+                    else:
+                        model_list = models_response if isinstance(models_response, list) else []
+                    
+                    # Extract model names safely
+                    for m in model_list:
+                        if isinstance(m, dict):
+                            name = m.get('name') or m.get('model') or m.get('id')
+                            if name:
+                                ollama_models.append(name)
+                        elif isinstance(m, str):
+                            ollama_models.append(m)
+                    
+                    if ollama_models:
+                        st.success(f"✅ Ollama detected! Available models: {', '.join(ollama_models)}")
+                        ollama_available = True
+                    else:
+                        st.warning("⚠️ Ollama is running but no models found.")
+                        st.code("# Pull a model:\nollama pull llama3.2")
+                        ollama_error = "No models installed"
+                        
+                except Exception as list_error:
+                    st.error(f"❌ Ollama not responding: {str(list_error)}")
+                    st.markdown("""
+                    **Troubleshooting:**
+                    1. Make sure Ollama is installed
+                    2. Check if Ollama service is running
+                    3. Try running: `ollama list` in your terminal
+                    """)
+                    ollama_error = str(list_error)
+                    
+            except ImportError:
+                st.error("❌ Ollama Python package not installed.")
+                st.code("pip install ollama")
+                ollama_error = "Package not installed"
+            except Exception as e:
+                st.error(f"❌ Unexpected error checking Ollama: {str(e)}")
+                ollama_error = str(e)
+            
+            # Show installation instructions if not available
+            if not ollama_available:
+                with st.expander("📦 Install Ollama"):
+                    st.code("""# Windows:
+winget install Ollama.Ollama
+
+# Mac:
+brew install ollama
+
+# Linux:
+curl -fsSL https://ollama.com/install.sh | sh
+
+# After installation, pull a model:
+ollama pull llama3.2
+
+# Verify:
+ollama list""")
+            
+            # Initialize button
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                # Enable button if we have documents (allow initialization even if Ollama check fails - it might work anyway)
+                can_initialize = has_documents
+                
+                if not can_initialize:
+                    st.warning("⚠️ Need documents to initialize")
+                elif not ollama_available:
+                    st.warning("⚠️ Ollama may not be available, but you can try initializing anyway")
+                
+                init_button = st.button(
+                    "⚡ Initialize RAG System", 
+                    type="primary", 
+                    use_container_width=True, 
+                    key='init_rag_btn',
+                    disabled=not can_initialize,  # Only require documents, not Ollama check
+                    help="Initialize the RAG system with your documents"
+                )
+                
+                if init_button and can_initialize:
+                    # Use simple spinner instead of complex progress display
+                    with st.spinner("🚀 Initializing RAG system... This may take 1-2 minutes."):
+                        try:
+                            # Lazy import - only import when button is clicked
+                            from core.rag_engine import RAGEngine
+                            
+                            # Initialize RAG engine
+                            rag_engine = RAGEngine(
+                                model_name="llama3.2:latest",
+                                embedding_model="all-MiniLM-L6-v2",
+                                vector_db_path="vector_store"
+                            )
+                            
+                            # Check if it actually worked
+                            if not rag_engine.llm.is_available():
+                                st.error("❌ RAG initialized but Ollama is not available!")
+                                st.markdown("""
+                                **Please:**
+                                1. Install Ollama: https://ollama.com/download
+                                2. Pull a model: `ollama pull llama3.2`
+                                3. Try initializing again
+                                """)
+                                st.session_state.rag_initialized = False
+                                st.session_state.rag_engine = None
+                            else:
+                                # Success!
+                                st.session_state.rag_engine = rag_engine
+                                st.session_state.rag_initialized = True
+                                st.success("✅ RAG system initialized successfully!")
+                                st.balloons()
+                                st.rerun()
+                                
+                        except Exception as e:
+                            st.error(f"❌ Error initializing RAG: {e}")
+                            
+                            # Detailed error info
+                            with st.expander("🐛 Error Details"):
+                                import traceback
+                                st.code(traceback.format_exc())
+                            
+                            # Specific error help
+                            error_str = str(e).lower()
+                            if 'ollama' in error_str or 'connection' in error_str:
+                                st.markdown("""
+                                **This looks like an Ollama connection issue:**
+                                1. Install Ollama: https://ollama.com/download
+                                2. Make sure it's running: `ollama list`
+                                3. Pull a model: `ollama pull llama3.2`
+                                """)
+                            elif 'torch' in error_str or 'dll' in error_str:
+                                st.markdown("""
+                                **This looks like a PyTorch issue:**
+                                ```bash
+                                pip uninstall torch torchvision torchaudio -y
+                                pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+                                ```
+                                """)
+                            
+                            st.session_state.rag_initialized = False
+                            st.session_state.rag_engine = None
+            
+            # Show helpful info
+            with st.expander("ℹ️ What is RAG?"):
+                st.markdown("""
+                **RAG (Retrieval-Augmented Generation)** allows you to:
+                - 🤖 Ask questions in natural language
+                - 📚 Get answers from YOUR documents only
+                - 📖 See citations and sources automatically
+                - 💬 Have context-aware conversations
+                - 🔍 Reason across multiple documents
+                
+                Everything runs **locally** - 100% free, no API costs!
+                """)
+            
+            return  # Stop here if not initialized
+        
+        # RAG is initialized - get the engine safely
+        rag_engine = st.session_state.get('rag_engine')
+        
+        if rag_engine is None:
+            st.error("❌ RAG engine initialization failed. Please try again.")
+            if st.button("🔄 Retry Initialization", key='retry_rag_btn'):
+                st.session_state.rag_initialized = False
+                st.rerun()
+            return
+        
+        # Double-check LLM is available
+        if not rag_engine.llm.is_available():
+            st.error("❌ RAG initialized but Ollama is not responding!")
+            st.markdown("""
+            **Please check:**
+            1. Is Ollama installed? Run: `ollama --version`
+            2. Are models available? Run: `ollama list`
+            3. Try: `ollama pull llama3.2`
+            
+            After fixing, click below to retry:
+            """)
+            if st.button("🔄 Retry Connection", key='retry_ollama_btn'):
+                st.session_state.rag_initialized = False
+                st.rerun()
+            return
+    
+       
+        
+        # Sidebar for RAG configuration
+        with st.sidebar:
+            st.subheader("🤖 RAG Configuration")
+            
+            # Check system status
+            ready, message = rag_engine.is_ready()
+            
+            if ready:
+                st.success(f"✅ {message}")
+            else:
+                st.warning(f"⚠️ {message}")
+            
+            st.markdown("---")
+            
+            # Model selection
+            st.subheader("🎯 Model Settings")
+            
+            available_models = rag_engine.llm.list_models()
+            
+            if available_models:
+                current_model = rag_engine.llm.model_name
+                
+                selected_model = st.selectbox(
+                    "LLM Model:",
+                    options=available_models,
+                    index=available_models.index(current_model) if current_model in available_models else 0,
+                    help="Select the Ollama model to use",
+                    key='rag_model_select'
+                )
+                
+                if selected_model != current_model:
+                    if st.button("🔄 Switch Model", use_container_width=True, key='switch_model_btn'):
+                        with st.spinner(f"Switching to {selected_model}..."):
+                            success = rag_engine.switch_model(selected_model)
+                            if success:
+                                st.success(f"✅ Switched to {selected_model}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Failed to switch to {selected_model}")
+            else:
+                st.warning("No Ollama models found")
+                st.code("ollama pull llama3.2")
+            
+            st.markdown("---")
+            
+            # Document indexing
+            st.subheader("📚 Document Indexing")
+            
+            stats = rag_engine.get_stats()
+            vector_stats = stats['vector_store']
+            
+            col1, col2 = st.columns(2)
+            col1.metric("Indexed Files", vector_stats['unique_files'])
+            col2.metric("Total Chunks", vector_stats['total_chunks'])
+            
+            if vector_stats['unique_files'] > 0:
+                st.metric("Index Size", f"{vector_stats['db_size_mb']:.1f} MB")
+            
+            # Index documents button
+            if st.button("🔄 Index Documents", use_container_width=True, key='index_docs_btn'):
+                st.session_state.show_indexing = True
+            
+            # Indexing interface
+            if st.session_state.get('show_indexing', False):
+                with st.expander("📁 Index Documents", expanded=True):
+                    index_dir = st.text_input(
+                        "Directory to Index:",
+                        value=st.session_state.get('selected_directory', './documents'),
+                        key='rag_index_dir'
+                    )
+                    
+                    file_types = st.multiselect(
+                        "File Types:",
+                        options=['.pdf', '.docx', '.doc'],
+                        default=['.pdf', '.docx', '.doc'],
+                        key='rag_file_types'
+                    )
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        if st.button("▶️ Start Indexing", use_container_width=True, key='start_index_btn'):
+                            if os.path.exists(index_dir):
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+                                
+                                def update_progress(current, total, filename):
+                                    progress = current / total if total > 0 else 0
+                                    progress_bar.progress(progress)
+                                    status_text.text(f"{filename} ({current}/{total})")
+                                
+                                try:
+                                    indexed, total = rag_engine.index_documents(
+                                        directory=index_dir,
+                                        file_types=file_types,
+                                        progress_callback=update_progress
+                                    )
+                                    
+                                    progress_bar.empty()
+                                    status_text.empty()
+                                    
+                                    st.success(f"✅ Indexed {indexed} new documents (Total: {total})")
+                                    st.session_state.show_indexing = False
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Error indexing: {e}")
+                            else:
+                                st.error("Directory not found!")
+                    
+                    with col2:
+                        if st.button("❌ Cancel", use_container_width=True, key='cancel_index_btn'):
+                            st.session_state.show_indexing = False
+                            st.rerun()
+            
+            st.markdown("---")
+            
+            # Conversation management
+            st.subheader("💬 Conversation")
+            
+            conv_stats = stats['conversation']
+            st.metric("Messages", conv_stats['total_messages'])
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🗑️ Clear Chat", use_container_width=True, key='clear_chat_btn'):
+                    rag_engine.clear_conversation()
+                    st.session_state.chat_messages = []
+                    st.success("✅ Chat cleared!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("💾 Export", use_container_width=True, key='export_chat_btn'):
+                    if conv_stats['total_messages'] > 0:
+                        filepath = rag_engine.export_conversation()
+                        if filepath:
+                            st.success(f"✅ Exported!")
+                            
+                            with open(filepath, 'r') as f:
+                                st.download_button(
+                                    label="📥 Download",
+                                    data=f.read(),
+                                    file_name=Path(filepath).name,
+                                    mime="application/json",
+                                    key='download_conv_btn',
+                                    use_container_width=True
+                                )
+                    else:
+                        st.warning("No messages to export")
+        
+        # Main chat area
+        if not ready:
+            st.info("👆 Please index documents in the sidebar to get started")
+            st.markdown("""
+            ### 🚀 Quick Start:
+            
+            1. Click **"🔄 Index Documents"** in the sidebar
+            2. Select your document directory
+            3. Click **"▶️ Start Indexing"**
+            4. Wait for indexing to complete
+            5. Start asking questions!
+            """)
+            return
+        
+        # Display chat history
+        chat_container = st.container()
+        
+        with chat_container:
+            for message in st.session_state.chat_messages:
+                with st.chat_message(message['role']):
+                    st.markdown(message['content'])
+                    
+                    # Show citations if available
+                    if message.get('citations'):
+                        with st.expander(f"📎 Sources ({len(message['citations'])})"):
+                            for i, citation in enumerate(message['citations'], 1):
+                                st.markdown(
+                                    f"**{i}. {citation['file_name']}** (Page {citation['page_number']})\n\n"
+                                    f"_{citation['chunk']}_"
+                                )
+                                st.markdown("---")
+        
+        # Chat input
+        if prompt := st.chat_input("Ask a question about your documents...", key='chat_input'):
+            # Add user message to chat
+            st.session_state.chat_messages.append({
+                'role': 'user',
+                'content': prompt
+            })
+            
+            # Display user message
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            
+            # Generate assistant response
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                
+                # Streaming response
+                full_response = ""
+                
+                try:
+                    with st.spinner("🤔 Thinking..."):
+                        result = rag_engine.answer_question(
+                            question=prompt,
+                            stream=True
+                        )
+                    
+                    # Stream the response
+                    for chunk in result['answer']:
+                        full_response += chunk
+                        message_placeholder.markdown(full_response + "▌")
+                    
+                    message_placeholder.markdown(full_response)
+                    
+                    # Show citations
+                    if result['citations']:
+                        with st.expander(f"📎 Sources ({len(result['citations'])})"):
+                            for i, citation in enumerate(result['citations'], 1):
+                                st.markdown(
+                                    f"**{i}. {citation['file_name']}** (Page {citation.get('page_number', 'N/A')})\n\n"
+                                    f"_{citation['chunk']}_"
+                                )
+                                st.markdown("---")
+                    
+                    # Add assistant message to chat
+                    st.session_state.chat_messages.append({
+                        'role': 'assistant',
+                        'content': full_response,
+                        'citations': result['citations']
+                    })
+                    
+                except Exception as e:
+                    error_msg = f"❌ Error generating response: {e}"
+                    message_placeholder.error(error_msg)
+                    st.session_state.chat_messages.append({
+                        'role': 'assistant',
+                        'content': error_msg,
+                        'citations': []
+                    })
+        
+        # Tips section at bottom (only show if no messages)
+        if len(st.session_state.chat_messages) == 0:
+            st.markdown("---")
+            st.markdown("### 💡 Tips:")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("""
+                **Ask Specific Questions:**
+                - "What is named entity recognition?"
+                - "Compare the approaches in document A and B"
+                - "What are the main findings?"
+                """)
+            
+            with col2:
+                st.markdown("""
+                **Features:**
+                - ✅ Context-aware conversations
+                - ✅ Multi-document reasoning
+                - ✅ Automatic citations
+                - ✅ 100% free & local
+                """)
 
 if __name__ == "__main__":
     main()
